@@ -1058,11 +1058,17 @@ gss_read_verf(struct rpc_gss_wire_cred *gc,
 
 static void gss_free_in_token_pages(struct gssp_in_token *in_token)
 {
+	u32 inlen;
 	int i;
 
 	i = 0;
-	while (in_token->pages[i])
-		put_page(in_token->pages[i++]);
+	inlen = in_token->page_len;
+	while (inlen) {
+		if (in_token->pages[i])
+			put_page(in_token->pages[i]);
+		inlen -= inlen > PAGE_SIZE ? PAGE_SIZE : inlen;
+	}
+
 	kfree(in_token->pages);
 	in_token->pages = NULL;
 }
@@ -1082,23 +1088,18 @@ static int gss_read_proxy_verf(struct svc_rqst *rqstp,
 		return res;
 
 	inlen = svc_getnl(argv);
-	if (inlen > (argv->iov_len + rqstp->rq_arg.page_len)) {
-		kfree(in_handle->data);
+	if (inlen > (argv->iov_len + rqstp->rq_arg.page_len))
 		return SVC_DENIED;
-	}
 
 	pages = DIV_ROUND_UP(inlen, PAGE_SIZE);
-	in_token->pages = kcalloc(pages + 1, sizeof(struct page *), GFP_KERNEL);
-	if (!in_token->pages) {
-		kfree(in_handle->data);
+	in_token->pages = kcalloc(pages, sizeof(struct page *), GFP_KERNEL);
+	if (!in_token->pages)
 		return SVC_DENIED;
-	}
 	in_token->page_base = 0;
 	in_token->page_len = inlen;
 	for (i = 0; i < pages; i++) {
 		in_token->pages[i] = alloc_page(GFP_KERNEL);
 		if (!in_token->pages[i]) {
-			kfree(in_handle->data);
 			gss_free_in_token_pages(in_token);
 			return SVC_DENIED;
 		}

@@ -52,8 +52,6 @@ static int tpm_bios_measurements_open(struct inode *inode,
 	if (!err) {
 		seq = file->private_data;
 		seq->private = chip;
-	} else {
-		put_device(&chip->dev);
 	}
 
 	return err;

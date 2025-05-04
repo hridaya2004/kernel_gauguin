@@ -65,7 +65,8 @@ static const char * const power_supply_charge_type_text[] = {
 static const char * const power_supply_health_text[] = {
 	"Unknown", "Good", "Overheat", "Dead", "Over voltage",
 	"Unspecified failure", "Cold", "Watchdog timer expire",
-	"Safety timer expire", "Over current", "Warm", "Cool", "Hot"
+	"Safety timer expire",
+	"Warm", "Cool", "Hot"
 };
 
 static const char * const power_supply_technology_text[] = {
@@ -148,8 +149,7 @@ static ssize_t power_supply_show_property(struct device *dev,
 
 		if (ret < 0) {
 			if (ret == -ENODATA)
-				dev_dbg_ratelimited(dev,
-					"driver has no data for `%s' property\n",
+				dev_dbg(dev, "driver has no data for `%s' property\n",
 					attr->attr.name);
 			else if (ret != -ENODEV && ret != -EAGAIN)
 				dev_err_ratelimited(dev,
@@ -202,6 +202,12 @@ static ssize_t power_supply_show_property(struct device *dev,
 		ret = sprintf(buf, "%s\n",
 			      power_supply_usbc_pr_text[value.intval]);
 		break;
+#ifdef CONFIG_SOMC_CHARGER_EXTENSION
+	case POWER_SUPPLY_PROP_TYPEC_POWER_ROLE_FOR_WDET:
+		ret = scnprintf(buf, PAGE_SIZE, "%s\n",
+			       power_supply_usbc_pr_text[value.intval]);
+		break;
+#endif
 	case POWER_SUPPLY_PROP_TYPEC_SRC_RP:
 		ret = sprintf(buf, "%s\n",
 			      power_supply_typec_src_rp_text[value.intval]);
@@ -215,26 +221,13 @@ static ssize_t power_supply_show_property(struct device *dev,
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT:
 		ret = sprintf(buf, "%lld\n", value.int64val);
 		break;
-	case POWER_SUPPLY_PROP_ROMID:
-	case POWER_SUPPLY_PROP_DS_STATUS:
-		ret = scnprintf(buf, PAGE_SIZE, "%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x\n",
-			value.arrayval[0], value.arrayval[1], value.arrayval[2], value.arrayval[3],
-			value.arrayval[4], value.arrayval[5], value.arrayval[6], value.arrayval[7]);
-		break;
-	case POWER_SUPPLY_PROP_PAGE0_DATA:
-	case POWER_SUPPLY_PROP_PAGE1_DATA:
-	case POWER_SUPPLY_PROP_PAGEDATA:
-		ret = scnprintf(buf, PAGE_SIZE, "%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x\n",
-			value.arrayval[0], value.arrayval[1], value.arrayval[2], value.arrayval[3],
-			value.arrayval[4], value.arrayval[5], value.arrayval[6], value.arrayval[7],
-			value.arrayval[8], value.arrayval[9], value.arrayval[10], value.arrayval[11],
-			value.arrayval[12], value.arrayval[13], value.arrayval[14], value.arrayval[15]);
-		break;
-	case POWER_SUPPLY_PROP_VERIFY_MODEL_NAME:
-		ret = sprintf(buf, "%s\n", value.strval);
-		break;
 	case POWER_SUPPLY_PROP_MODEL_NAME ... POWER_SUPPLY_PROP_SERIAL_NUMBER:
 		ret = sprintf(buf, "%s\n", value.strval);
+		break;
+	case POWER_SUPPLY_PROP_FCC_MAH:
+		ret = sprintf(buf, "%d,%d,%d,%d,%d\n",
+			value.fcc_val[0], value.fcc_val[1],
+			value.fcc_val[2], value.fcc_val[3], value.fcc_val[4]);
 		break;
 	default:
 		ret = sprintf(buf, "%d\n", value.intval);
@@ -346,9 +339,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(capacity_alert_min),
 	POWER_SUPPLY_ATTR(capacity_alert_max),
 	POWER_SUPPLY_ATTR(capacity_level),
-	POWER_SUPPLY_ATTR(soc_decimal),
-	POWER_SUPPLY_ATTR(soc_decimal_rate),
-	POWER_SUPPLY_ATTR(shutdown_delay),
 	POWER_SUPPLY_ATTR(temp),
 	POWER_SUPPLY_ATTR(temp_max),
 	POWER_SUPPLY_ATTR(temp_min),
@@ -373,7 +363,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(charge_enabled),
 	POWER_SUPPLY_ATTR(set_ship_mode),
 	POWER_SUPPLY_ATTR(real_type),
-	POWER_SUPPLY_ATTR(quick_charge_type),
 	POWER_SUPPLY_ATTR(charge_now_raw),
 	POWER_SUPPLY_ATTR(charge_now_error),
 	POWER_SUPPLY_ATTR(capacity_raw),
@@ -425,6 +414,9 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(typec_mode),
 	POWER_SUPPLY_ATTR(typec_cc_orientation),
 	POWER_SUPPLY_ATTR(typec_power_role),
+#ifdef CONFIG_SOMC_CHARGER_EXTENSION
+	POWER_SUPPLY_ATTR(typec_power_role_for_wdet),
+#endif
 	POWER_SUPPLY_ATTR(typec_src_rp),
 	POWER_SUPPLY_ATTR(pd_allowed),
 	POWER_SUPPLY_ATTR(pd_active),
@@ -442,8 +434,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(parallel_mode),
 	POWER_SUPPLY_ATTR(die_health),
 	POWER_SUPPLY_ATTR(connector_health),
-	POWER_SUPPLY_ATTR(connector_temp),
-	POWER_SUPPLY_ATTR(vbus_disable),
 	POWER_SUPPLY_ATTR(ctm_current_max),
 	POWER_SUPPLY_ATTR(hw_current_max),
 	POWER_SUPPLY_ATTR(pr_swap),
@@ -493,10 +483,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(voltage_step),
 	POWER_SUPPLY_ATTR(apsd_rerun),
 	POWER_SUPPLY_ATTR(apsd_timeout),
-	POWER_SUPPLY_ATTR(pd_authentication),
-	POWER_SUPPLY_ATTR(type_recheck),
-	POWER_SUPPLY_ATTR(fastcharge_mode),
-	POWER_SUPPLY_ATTR(ffc_termination_current),
 	/* Charge pump properties */
 	POWER_SUPPLY_ATTR(cp_status1),
 	POWER_SUPPLY_ATTR(cp_status2),
@@ -510,39 +496,55 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(cp_ilim),
 	POWER_SUPPLY_ATTR(irq_status),
 	POWER_SUPPLY_ATTR(parallel_output_mode),
-	POWER_SUPPLY_ATTR(cc_toggle_enable),
 	POWER_SUPPLY_ATTR(fg_type),
 	POWER_SUPPLY_ATTR(charger_status),
-	/* TI charge pump properties */
-	POWER_SUPPLY_ATTR(ti_battery_present),
-	POWER_SUPPLY_ATTR(ti_vbus_present),
-	POWER_SUPPLY_ATTR(ti_battery_voltage),
-	POWER_SUPPLY_ATTR(ti_battery_current),
-	POWER_SUPPLY_ATTR(ti_battery_temperature),
-	POWER_SUPPLY_ATTR(ti_bus_voltage),
-	POWER_SUPPLY_ATTR(ti_bus_current),
-	POWER_SUPPLY_ATTR(ti_bus_temperature),
-	POWER_SUPPLY_ATTR(ti_die_temperature),
-	POWER_SUPPLY_ATTR(ti_alarm_status),
-	POWER_SUPPLY_ATTR(ti_fault_status),
-	POWER_SUPPLY_ATTR(ti_reg_status),
-	POWER_SUPPLY_ATTR(ti_set_bus_protection_for_qc3),
-	/* battery verify properties */
-	POWER_SUPPLY_ATTR(romid),
-	POWER_SUPPLY_ATTR(ds_status),
-	POWER_SUPPLY_ATTR(pagenumber),
-	POWER_SUPPLY_ATTR(pagedata),
-	POWER_SUPPLY_ATTR(authen_result),
-	POWER_SUPPLY_ATTR(session_seed),
-	POWER_SUPPLY_ATTR(s_secret),
-	POWER_SUPPLY_ATTR(challenge),
-	POWER_SUPPLY_ATTR(auth_anon),
-	POWER_SUPPLY_ATTR(auth_bdconst),
-	POWER_SUPPLY_ATTR(page0_data),
-	POWER_SUPPLY_ATTR(page1_data),
-	POWER_SUPPLY_ATTR(verify_model_name),
-	POWER_SUPPLY_ATTR(chip_ok),
-	POWER_SUPPLY_ATTR(maxim_batt_cycle_count),
+#ifdef CONFIG_SOMC_CHARGER_EXTENSION
+	/* SOMC Local extensions */
+	POWER_SUPPLY_ATTR(lrc_enable),
+	POWER_SUPPLY_ATTR(lrc_socmax),
+	POWER_SUPPLY_ATTR(lrc_socmin),
+	POWER_SUPPLY_ATTR(lrc_not_startup),
+	POWER_SUPPLY_ATTR(enable_shutdown_at_low_battery),
+	POWER_SUPPLY_ATTR(bootup_shutdown_phase),
+	POWER_SUPPLY_ATTR(legacy_cable_status),
+	POWER_SUPPLY_ATTR(charger_type_determined),
+	POWER_SUPPLY_ATTR(real_temp),
+	POWER_SUPPLY_ATTR(smart_charging_activation),
+	POWER_SUPPLY_ATTR(smart_charging_interruption),
+	POWER_SUPPLY_ATTR(smart_charging_status),
+	POWER_SUPPLY_ATTR(chg_pwr_fcc),
+	POWER_SUPPLY_ATTR(chg_pwr_icl),
+	POWER_SUPPLY_ATTR(chg_pwr_indication_control),
+	POWER_SUPPLY_ATTR(aux_temp),
+	POWER_SUPPLY_ATTR(jeita_step_fcc),
+	POWER_SUPPLY_ATTR(jeita_step_fv),
+	POWER_SUPPLY_ATTR(jeita_condition),
+	POWER_SUPPLY_ATTR(profile_fv_rb_en),
+	POWER_SUPPLY_ATTR(cc_reconnection_running),
+	POWER_SUPPLY_ATTR(charge_full_raw),
+	POWER_SUPPLY_ATTR(learning_counter),
+	POWER_SUPPLY_ATTR(learning_trial_counter),
+	POWER_SUPPLY_ATTR(batt_aging_level),
+	POWER_SUPPLY_ATTR(recharge_counter),
+	POWER_SUPPLY_ATTR(full_counter),
+	POWER_SUPPLY_ATTR(dcin_valid),
+	POWER_SUPPLY_ATTR(usbin_valid),
+	POWER_SUPPLY_ATTR(wireless_suspend_for_dev1),
+	POWER_SUPPLY_ATTR(wireless_mode),
+	POWER_SUPPLY_ATTR(chg_pwr_dc_icl),
+	POWER_SUPPLY_ATTR(wlc_vout_set),
+	POWER_SUPPLY_ATTR(real_nom_cap),
+	POWER_SUPPLY_ATTR(otg_connected),
+	POWER_SUPPLY_ATTR(wlc_reconnection_running),
+	POWER_SUPPLY_ATTR(battery_raw_soc),
+	POWER_SUPPLY_ATTR(dcin_en_sts),
+	POWER_SUPPLY_ATTR(reset_dcin_en),
+	POWER_SUPPLY_ATTR(skin_temp),
+	POWER_SUPPLY_ATTR(monotonic_soc),
+	POWER_SUPPLY_ATTR(max_charge_current),
+	POWER_SUPPLY_ATTR(int_cld),
+	POWER_SUPPLY_ATTR(running_status),
+#endif
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_ATTR(charge_counter_ext),
 	/* Properties of type `const char *' */
@@ -550,8 +552,18 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(manufacturer),
 	POWER_SUPPLY_ATTR(battery_type),
 	POWER_SUPPLY_ATTR(cycle_counts),
+#ifdef CONFIG_SOMC_CHARGER_EXTENSION
+	POWER_SUPPLY_ATTR(charger_type),
+	POWER_SUPPLY_ATTR(wireless_status),
+	POWER_SUPPLY_ATTR(wireless_thermal_v_limit),
+	POWER_SUPPLY_ATTR(auth),
+#endif
+#ifdef CONFIG_ARCH_SONY_NILE
+	POWER_SUPPLY_ATTR(recharge_voltage),
+#endif
 	POWER_SUPPLY_ATTR(serial_number),
-	POWER_SUPPLY_ATTR(uv_wa),
+	POWER_SUPPLY_ATTR(fcc_mah),
+	POWER_SUPPLY_ATTR(reset_miscta),
 };
 
 static struct attribute *

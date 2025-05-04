@@ -3219,31 +3219,28 @@ static inline int msm_pcie_oper_conf(struct pci_bus *bus, u32 devfn, int oper,
 
 		if (dev->shadow_en) {
 			if (rd_val == PCIE_LINK_DOWN &&
-			   (readl_relaxed(config_base) == PCIE_LINK_DOWN))
+			   (readl_relaxed(config_base) == PCIE_LINK_DOWN)) {
 				PCIE_ERR(dev,
 					"Read of RC%d %d:0x%02x + 0x%04x[%d] is all FFs\n",
 					rc_idx, bus->number, devfn,
 					where, size);
-			else
+				if (dev->config_recovery) {
+					PCIE_ERR(dev,
+						"RC%d link recovery schedule\n",
+						rc_idx);
+					dev->cfg_access = false;
+					schedule_work(&dev->link_recover_wq);
+				}
+			} else {
 				msm_pcie_save_shadow(dev, word_offset, wr_val,
 					bdf, rc);
+			}
 		}
 
 		PCIE_DBG3(dev,
 			"RC%d %d:0x%02x + 0x%04x[%d] <- 0x%08x; rd 0x%08x val 0x%08x\n",
 			rc_idx, bus->number, devfn, where, size,
 			wr_val, rd_val, *val);
-	}
-
-	if (rd_val == PCIE_LINK_DOWN &&
-	   (readl_relaxed(config_base) == PCIE_LINK_DOWN)) {
-		if (dev->config_recovery) {
-			PCIE_ERR(dev,
-				"RC%d link recovery schedule\n",
-				rc_idx);
-			dev->cfg_access = false;
-			schedule_work(&dev->link_recover_wq);
-		}
 	}
 
 unlock:
@@ -4628,8 +4625,10 @@ static int msm_pcie_enable(struct msm_pcie_dev_t *dev)
 		goto link_fail;
 	}
 
-	if (dev->enumerated)
+	if (dev->enumerated) {
+		msm_msi_config(dev_get_msi_domain(&dev->dev->dev));
 		msm_pcie_config_link_pm(dev, true);
+	}
 
 	goto out;
 
@@ -4669,6 +4668,9 @@ static void msm_pcie_disable(struct msm_pcie_dev_t *dev)
 		mutex_unlock(&dev->setup_lock);
 		return;
 	}
+
+	/* suspend access to MSI register. resume access in msm_msi_config */
+	msm_msi_config_access(dev_get_msi_domain(&dev->dev->dev), false);
 
 	dev->link_status = MSM_PCIE_LINK_DISABLED;
 	dev->power_on = false;
@@ -5164,10 +5166,7 @@ static void handle_sbr_func(struct work_struct *work)
 	} else {
 		PCIE_ERR(dev, "PCIe RC%d link initialization failed\n",
 			dev->rc_idx);
-		return;
 	}
-	/* restore BME that gets cleared after link_down reset */
-	msm_pcie_write_mask(dev->dm_core + PCIE20_COMMAND_STATUS, 0, BIT(2));
 }
 
 static irqreturn_t handle_flush_irq(int irq, void *data)
@@ -6884,7 +6883,6 @@ int msm_pci_probe(struct pci_dev *pci_dev,
 static struct pci_device_id msm_pci_device_id[] = {
 	{PCI_DEVICE(0x17cb, 0x0108)},
 	{PCI_DEVICE(0x17cb, 0x010b)},
-	{PCI_DEVICE(0x1b21, 0x2806)},
 	{0},
 };
 
@@ -8076,3 +8074,6 @@ int msm_pcie_shadow_control(struct pci_dev *dev, bool enable)
 	return ret;
 }
 EXPORT_SYMBOL(msm_pcie_shadow_control);
+
+MODULE_DESCRIPTION("Qualcomm Technologies, Inc. PCIe RC driver");
+MODULE_LICENSE("GPL v2");

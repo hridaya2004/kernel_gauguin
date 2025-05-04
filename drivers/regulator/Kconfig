@@ -839,6 +839,15 @@ config REGULATOR_SKY81452
 	  This driver can also be built as a module. If so, the module
 	  will be called sky81452-regulator.
 
+config REGULATOR_SLG51000
+	tristate "Dialog Semiconductor SLG51000 regulator driver"
+	depends on I2C
+	help
+	  This driver provides support for the Dialog Semiconductor SLG51000
+	  CMIC with high PSRR, low noise multi-output LDOs, designed for high
+	  performance camera modules, advanced sensor systems, and other small
+	  multi-rail applications.
+
 config REGULATOR_STM32_VREFBUF
 	tristate "STMicroelectronics STM32 VREFBUF"
 	depends on ARCH_STM32 || COMPILE_TEST
@@ -1064,16 +1073,6 @@ config REGULATOR_MEM_ACC
 	  Qualcomm Technologies, Inc. (QTI) chips. The accelerator
 	  controls delays applied for memory accesses.  This driver
 	  configures the power-mode(corner) for the memory accelerator.
-
-config REGULATOR_CPR
-	bool "RBCPR regulator driver for APC"
-	depends on OF
-	help
-	  Compile in RBCPR (RapidBridge Core Power Reduction) driver to support
-	  corner vote for APC power rail. The driver takes PTE process voltage
-	  suggestions in efuse as initial settings. It converts corner vote
-	  to voltage value before writing to a voltage regulator API, such as
-	  that provided by spm-regulator driver.
 
 config REGULATOR_CPR3
 	bool "CPR3 regulator core support"

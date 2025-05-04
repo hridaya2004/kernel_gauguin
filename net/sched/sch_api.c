@@ -783,7 +783,7 @@ void qdisc_tree_reduce_backlog(struct Qdisc *sch, unsigned int n,
 	drops = max_t(int, n, 0);
 	rcu_read_lock();
 	while ((parentid = sch->parent)) {
-		if (parentid == TC_H_ROOT)
+		if (TC_H_MAJ(parentid) == TC_H_MAJ(TC_H_INGRESS))
 			break;
 
 		if (sch->flags & TCQ_F_NOPARENT)
@@ -1004,12 +1004,11 @@ static int qdisc_graft(struct net_device *dev, struct Qdisc *parent,
 
 skip:
 		if (!ingress) {
-			old = dev->qdisc;
+			notify_and_destroy(net, skb, n, classid,
+					   dev->qdisc, new);
 			if (new && !new->ops->attach)
 				qdisc_refcount_inc(new);
 			dev->qdisc = new ? : &noop_qdisc;
-
-			notify_and_destroy(net, skb, n, classid, old, new);
 
 			if (new && new->ops->attach)
 				new->ops->attach(new);
@@ -1032,12 +1031,8 @@ skip:
 			unsigned long cl = cops->find(parent, classid);
 
 			if (cl) {
-				if (new && new->ops == &noqueue_qdisc_ops) {
-					NL_SET_ERR_MSG(extack, "Cannot assign noqueue to a class");
-					err = -EINVAL;
-				} else {
-					err = cops->graft(parent, cl, new, &old, extack);
-				}
+				err = cops->graft(parent, cl, new, &old,
+						  extack);
 			} else {
 				NL_SET_ERR_MSG(extack, "Specified class not found");
 				err = -ENOENT;
@@ -1149,12 +1144,7 @@ static struct Qdisc *qdisc_create(struct net_device *dev,
 	sch->parent = parent;
 
 	if (handle == TC_H_INGRESS) {
-		if (!(sch->flags & TCQ_F_INGRESS)) {
-			NL_SET_ERR_MSG(extack,
-				       "Specified parent ID is reserved for ingress and clsact Qdiscs");
-			err = -EINVAL;
-			goto err_out3;
-		}
+		sch->flags |= TCQ_F_INGRESS;
 		handle = TC_H_MAKE(TC_H_INGRESS, 0);
 		lockdep_set_class(qdisc_lock(sch), &qdisc_rx_lock);
 	} else {
@@ -1439,62 +1429,10 @@ static int tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
 	return 0;
 }
 
-static bool req_create_or_replace(struct nlmsghdr *n)
-{
-	return (n->nlmsg_flags & NLM_F_CREATE &&
-		n->nlmsg_flags & NLM_F_REPLACE);
-}
-
-static bool req_create_exclusive(struct nlmsghdr *n)
-{
-	return (n->nlmsg_flags & NLM_F_CREATE &&
-		n->nlmsg_flags & NLM_F_EXCL);
-}
-
-static bool req_change(struct nlmsghdr *n)
-{
-	return (!(n->nlmsg_flags & NLM_F_CREATE) &&
-		!(n->nlmsg_flags & NLM_F_REPLACE) &&
-		!(n->nlmsg_flags & NLM_F_EXCL));
-}
-
-/*
- * enable/disable flow on qdisc.
- */
-int
-tc_qdisc_flow_control(struct net_device *dev, u32 tcm_handle, int enable_flow)
-{
-	struct Qdisc *q;
-	int qdisc_len = 0;
-	struct __qdisc_change_req {
-		struct nlattr attr;
-		struct tc_prio_qopt data;
-	} req =	{
-		.attr = {sizeof(struct __qdisc_change_req), TCA_OPTIONS},
-		.data = {3, {1, 2, 2, 2, 1, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1}, 1}
-		};
-
-	/* override flow bit */
-	req.data.enable_flow = enable_flow;
-
-	/* look up using tcm handle */
-	q = qdisc_lookup(dev, tcm_handle);
-
-	/* call registered change function */
-	if (likely(q && q->ops)) {
-		if (likely(q->ops->change)) {
-			qdisc_len = q->q.qlen;
-			if (q->ops->change(q, &req.attr, NULL))
-				pr_err("%s(): qdisc change failed\n", __func__);
-		}
-	}
-	return qdisc_len;
-}
-EXPORT_SYMBOL(tc_qdisc_flow_control);
-
 /*
  * Create/change qdisc.
  */
+
 static int tc_modify_qdisc(struct sk_buff *skb, struct nlmsghdr *n,
 			   struct netlink_ext_ack *extack)
 {
@@ -1567,19 +1505,10 @@ replay:
 					NL_SET_ERR_MSG(extack, "Invalid qdisc name");
 					return -EINVAL;
 				}
-				if (q->flags & TCQ_F_INGRESS) {
-					NL_SET_ERR_MSG(extack,
-						       "Cannot regraft ingress or clsact Qdiscs");
-					return -EINVAL;
-				}
 				if (q == p ||
 				    (p && check_loop(q, p, 0))) {
 					NL_SET_ERR_MSG(extack, "Qdisc parent/child loop detected");
 					return -ELOOP;
-				}
-				if (clid == TC_H_INGRESS) {
-					NL_SET_ERR_MSG(extack, "Ingress cannot graft directly");
-					return -EINVAL;
 				}
 				qdisc_refcount_inc(q);
 				goto graft;
@@ -1591,35 +1520,27 @@ replay:
 				 *
 				 *   We know, that some child q is already
 				 *   attached to this parent and have choice:
-				 *   1) change it or 2) create/graft new one.
-				 *   If the requested qdisc kind is different
-				 *   than the existing one, then we choose graft.
-				 *   If they are the same then this is "change"
-				 *   operation - just let it fallthrough..
+				 *   either to change it or to create/graft new one.
 				 *
 				 *   1. We are allowed to create/graft only
-				 *   if the request is explicitly stating
-				 *   "please create if it doesn't exist".
+				 *   if CREATE and REPLACE flags are set.
 				 *
-				 *   2. If the request is to exclusive create
-				 *   then the qdisc tcm_handle is not expected
+				 *   2. If EXCL is set, requestor wanted to say,
+				 *   that qdisc tcm_handle is not expected
 				 *   to exist, so that we choose create/graft too.
 				 *
 				 *   3. The last case is when no flags are set.
-				 *   This will happen when for example tc
-				 *   utility issues a "change" command.
 				 *   Alas, it is sort of hole in API, we
 				 *   cannot decide what to do unambiguously.
-				 *   For now we select create/graft.
+				 *   For now we select create/graft, if
+				 *   user gave KIND, which does not match existing.
 				 */
-				if (tca[TCA_KIND] &&
-				    nla_strcmp(tca[TCA_KIND], q->ops->id)) {
-					if (req_create_or_replace(n) ||
-					    req_create_exclusive(n))
-						goto create_n_graft;
-					else if (req_change(n))
-						goto create_n_graft2;
-				}
+				if ((n->nlmsg_flags & NLM_F_CREATE) &&
+				    (n->nlmsg_flags & NLM_F_REPLACE) &&
+				    ((n->nlmsg_flags & NLM_F_EXCL) ||
+				     (tca[TCA_KIND] &&
+				      nla_strcmp(tca[TCA_KIND], q->ops->id))))
+					goto create_n_graft;
 			}
 		}
 	} else {
@@ -1653,7 +1574,6 @@ create_n_graft:
 		NL_SET_ERR_MSG(extack, "Qdisc not found. To create specify NLM_F_CREATE flag");
 		return -ENOENT;
 	}
-create_n_graft2:
 	if (clid == TC_H_INGRESS) {
 		if (dev_ingress_queue(dev)) {
 			q = qdisc_create(dev, dev_ingress_queue(dev), p,

@@ -1061,6 +1061,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id,
 	mutex_init(&q->blk_trace_mutex);
 #endif
 	mutex_init(&q->sysfs_lock);
+	mutex_init(&q->sysfs_dir_lock);
 	spin_lock_init(&q->__queue_lock);
 
 	if (!q->mq_ops)
@@ -1681,6 +1682,63 @@ static void add_acct_request(struct request_queue *q, struct request *rq,
 	__elv_add_request(q, rq, where);
 }
 
+static void part_round_stats_single(struct request_queue *q, int cpu,
+				    struct hd_struct *part, unsigned long now,
+				    unsigned int inflight)
+{
+	if (inflight) {
+		__part_stat_add(cpu, part, time_in_queue,
+				inflight * (now - part->stamp));
+		__part_stat_add(cpu, part, io_ticks, (now - part->stamp));
+	}
+	part->stamp = now;
+}
+
+/**
+ * part_round_stats() - Round off the performance stats on a struct disk_stats.
+ * @q: target block queue
+ * @cpu: cpu number for stats access
+ * @part: target partition
+ *
+ * The average IO queue length and utilisation statistics are maintained
+ * by observing the current state of the queue length and the amount of
+ * time it has been in this state for.
+ *
+ * Normally, that accounting is done on IO completion, but that can result
+ * in more than a second's worth of IO being accounted for within any one
+ * second, leading to >100% utilisation.  To deal with that, we call this
+ * function to do a round-off before returning the results when reading
+ * /proc/diskstats.  This accounts immediately for all queue usage up to
+ * the current jiffies and restarts the counters again.
+ */
+void part_round_stats(struct request_queue *q, int cpu, struct hd_struct *part)
+{
+	struct hd_struct *part2 = NULL;
+	unsigned long now = jiffies;
+	unsigned int inflight[2];
+	int stats = 0;
+
+	if (part->stamp != now)
+		stats |= 1;
+
+	if (part->partno) {
+		part2 = &part_to_disk(part)->part0;
+		if (part2->stamp != now)
+			stats |= 2;
+	}
+
+	if (!stats)
+		return;
+
+	part_in_flight(q, part, inflight);
+
+	if (stats & 2)
+		part_round_stats_single(q, cpu, part2, now, inflight[1]);
+	if (stats & 1)
+		part_round_stats_single(q, cpu, part, now, inflight[0]);
+}
+EXPORT_SYMBOL_GPL(part_round_stats);
+
 #ifdef CONFIG_PM
 static void blk_pm_put_request(struct request *rq)
 {
@@ -2077,10 +2135,9 @@ static void handle_bad_sector(struct bio *bio, sector_t maxsector)
 	char b[BDEVNAME_SIZE];
 
 	pr_info_ratelimited("attempt to access beyond end of device\n"
-			    "%s: rw=%d, want=%Lu, limit=%Lu\n",
+			    "%s: rw=%d, want=%llu, limit=%llu\n",
 			    bio_devname(bio, b), bio->bi_opf,
-			    (unsigned long long)bio_end_sector(bio),
-			    (long long)maxsector);
+			    bio_end_sector(bio), maxsector);
 }
 
 #ifdef CONFIG_FAIL_MAKE_REQUEST
@@ -2127,7 +2184,10 @@ static inline bool bio_check_ro(struct bio *bio, struct hd_struct *part)
 
 		if (op_is_flush(bio->bi_opf) && !bio_sectors(bio))
 			return false;
-		pr_warn("Trying to write to read-only block-device %s (partno %d)\n",
+
+		WARN_ONCE(1,
+		       "generic_make_request: Trying to write "
+			"to read-only block-device %s (partno %d)\n",
 			bio_devname(bio, b), part->partno);
 		/* Older lvm-tools actually trigger this */
 		return false;
@@ -2718,10 +2778,9 @@ void blk_account_io_done(struct request *req, u64 now)
 		cpu = part_stat_lock();
 		part = req->part;
 
-		update_io_ticks(part, jiffies);
 		part_stat_inc(cpu, part, ios[sgrp]);
 		part_stat_add(cpu, part, nsecs[sgrp], now - req->start_time_ns);
-		part_stat_add(cpu, part, time_in_queue, nsecs_to_jiffies64(now - req->start_time_ns));
+		part_round_stats(req->q, cpu, part);
 		part_dec_in_flight(req->q, part, rq_data_dir(req));
 
 		hd_struct_put(part);
@@ -2781,11 +2840,10 @@ void blk_account_io_start(struct request *rq, bool new_io)
 			part = &rq->rq_disk->part0;
 			hd_struct_get(part);
 		}
+		part_round_stats(rq->q, cpu, part);
 		part_inc_in_flight(rq->q, part, rw);
 		rq->part = part;
 	}
-
-	update_io_ticks(part, jiffies);
 
 	part_stat_unlock();
 }

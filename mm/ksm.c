@@ -705,9 +705,8 @@ again:
 	 * case this node is no longer referenced, and should be freed;
 	 * however, it might mean that the page is under page_ref_freeze().
 	 * The __remove_mapping() case is easy, again the node is now stale;
-	 * the same is in reuse_ksm_page() case; but if page is swapcache
-	 * in migrate_page_move_mapping(), it might still be our page,
-	 * in which case it's essential to keep the node.
+	 * but if page is swapcache in migrate_page_move_mapping(), it might
+	 * still be our page, in which case it's essential to keep the node.
 	 */
 	while (!get_page_unless_zero(page)) {
 		/*
@@ -2382,7 +2381,7 @@ next_mm:
 static void ksm_do_scan(unsigned int scan_npages)
 {
 	struct rmap_item *rmap_item;
-	struct page *page;
+	struct page *uninitialized_var(page);
 
 	while (scan_npages-- && likely(!freezing(current))) {
 		cond_resched();

@@ -143,12 +143,9 @@ static void install_bp_hardening_cb(bp_hardening_cb_t fn,
 		__copy_hyp_vect_bpi(slot, hyp_vecs_start, hyp_vecs_end);
 	}
 
-	if (fn != __this_cpu_read(bp_hardening_data.fn)) {
-		__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
-		__this_cpu_write(bp_hardening_data.fn, fn);
-		__this_cpu_write(bp_hardening_data.template_start,
-				 hyp_vecs_start);
-	}
+	__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
+	__this_cpu_write(bp_hardening_data.fn, fn);
+	__this_cpu_write(bp_hardening_data.template_start, hyp_vecs_start);
 	spin_unlock(&bp_lock);
 }
 #else
@@ -345,19 +342,6 @@ void arm64_set_ssbd_mitigation(bool state)
 			asm volatile(SET_PSTATE_SSBS(0));
 		else
 			asm volatile(SET_PSTATE_SSBS(1));
-
-		/*
-		 * SSBS is self-synchronizing and is intended to affect
-		 * subsequent speculative instructions, but some CPUs can
-		 * speculate with a stale value of SSBS.
-		 *
-		 * Mitigate this with an unconditional speculation barrier, as
-		 * CPUs could mis-speculate branches and bypass a conditional
-		 * barrier.
-		 */
-		if (IS_ENABLED(CONFIG_ARM64_ERRATUM_3194386))
-			spec_bar();
-
 		return;
 	}
 
@@ -690,18 +674,6 @@ static void run_workaround_1542418_asid_rollover(const struct arm64_cpu_capabili
 }
 #endif
 
-static bool __maybe_unused
-has_neoverse_n1_erratum_1542419(const struct arm64_cpu_capabilities *entry,
-				int scope)
-{
-	u32 midr = read_cpuid_id();
-	bool has_dic = read_cpuid_cachetype() & BIT(CTR_DIC_SHIFT);
-	const struct midr_range range = MIDR_ALL_VERSIONS(MIDR_NEOVERSE_N1);
-
-	WARN_ON(scope != SCOPE_LOCAL_CPU || preemptible());
-	return is_midr_in_range(midr, &range) && has_dic;
-}
-
 #ifdef CONFIG_HARDEN_EL2_VECTORS
 
 static const struct midr_range arm64_harden_el2_vectors[] = {
@@ -746,40 +718,6 @@ static const struct midr_range arm64_workaround_845719_cpus[] = {
 	{},
 };
 
-#endif
-
-#ifdef CONFIG_ARM64_ERRATUM_1742098
-static struct midr_range broken_aarch32_aes[] = {
-	MIDR_RANGE(MIDR_CORTEX_A57, 0, 1, 0xf, 0xf),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A72),
-	{},
-};
-#endif
-
-#ifdef CONFIG_ARM64_ERRATUM_3194386
-static const struct midr_range erratum_spec_ssbs_list[] = {
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A76),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A77),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A78),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A78C),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A710),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A715),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A720),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_A725),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X1),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X1C),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X2),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X3),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X4),
-	MIDR_ALL_VERSIONS(MIDR_CORTEX_X925),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_N1),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_N2),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_N3),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_V1),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_V2),
-	MIDR_ALL_VERSIONS(MIDR_NEOVERSE_V3),
-	{}
-};
 #endif
 
 const struct arm64_cpu_capabilities arm64_errata[] = {
@@ -955,12 +893,12 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		ERRATA_MIDR_RANGE_LIST(arm64_workaround_1188873_cpus),
 	},
 #endif
-	{
-		.desc = "Spectre-BHB",
-		.capability = ARM64_SPECTRE_BHB,
-		.type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
-		.matches = is_spectre_bhb_affected,
-		.cpu_enable = spectre_bhb_enable_mitigation,
+        {
+            .desc = "Spectre-BHB",
+            .capability = ARM64_SPECTRE_BHB,
+            .type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
+            .matches = is_spectre_bhb_affected,
+            .cpu_enable = spectre_bhb_enable_mitigation,
 	},
 #ifdef CONFIG_ARM64_ERRATUM_1463225
 	{
@@ -984,31 +922,6 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		.capability = ARM64_WORKAROUND_1542418,
 		ERRATA_MIDR_RANGE(MIDR_CORTEX_A77, 0, 0, 1, 0),
 		.cpu_enable = run_workaround_1542418_asid_rollover,
-	},
-#endif
-#ifdef CONFIG_ARM64_ERRATUM_1542419
-	{
-		/* we depend on the firmware portion for correctness */
-		.desc = "ARM erratum 1542419 (kernel portion)",
-		.capability = ARM64_WORKAROUND_1542419,
-		.type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
-		.matches = has_neoverse_n1_erratum_1542419,
-		.cpu_enable = cpu_enable_trap_ctr_access,
-	},
-#endif
-#ifdef CONFIG_ARM64_ERRATUM_1742098
-	{
-		.desc = "ARM erratum 1742098",
-		.capability = ARM64_WORKAROUND_1742098,
-		CAP_MIDR_RANGE_LIST(broken_aarch32_aes),
-		.type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
-	},
-#endif
-#ifdef CONFIG_ARM64_ERRATUM_3194386
-	{
-		.desc = "SSBS not fully self-synchronizing",
-		.capability = ARM64_WORKAROUND_SPECULATIVE_SSBS,
-		ERRATA_MIDR_RANGE_LIST(erratum_spec_ssbs_list),
 	},
 #endif
 	{
@@ -1313,11 +1226,8 @@ static void kvm_setup_bhb_slot(const char *hyp_vecs_start)
 		__copy_hyp_vect_bpi(slot, hyp_vecs_start, hyp_vecs_end);
 	}
 
-	if (hyp_vecs_start != __this_cpu_read(bp_hardening_data.template_start)) {
-		__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
-		__this_cpu_write(bp_hardening_data.template_start,
-				 hyp_vecs_start);
-	}
+	__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
+	__this_cpu_write(bp_hardening_data.template_start, hyp_vecs_start);
 	spin_unlock(&bp_lock);
 }
 #else
@@ -1353,13 +1263,7 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 	} else if (spectre_bhb_loop_affected(SCOPE_LOCAL_CPU)) {
 		switch (spectre_bhb_loop_affected(SCOPE_SYSTEM)) {
 		case 8:
-			/*
-			 * A57/A72-r0 will already have selected the
-			 * spectre-indirect vector, which is sufficient
-			 * for BHB too.
-			 */
-			if (!__this_cpu_read(bp_hardening_data.fn))
-				kvm_setup_bhb_slot(__spectre_bhb_loop_k8_start);
+			kvm_setup_bhb_slot(__spectre_bhb_loop_k8_start);
 			break;
 		case 24:
 			kvm_setup_bhb_slot(__spectre_bhb_loop_k24_start);

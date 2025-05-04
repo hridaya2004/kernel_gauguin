@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/clk/qcom.h>
@@ -89,35 +89,15 @@ static void a530_efuse_speed_bin(struct adreno_device *adreno_dev)
 	adreno_dev->speed_bin = (val & speed_bin[1]) >> speed_bin[2];
 }
 
-static void a5xx_efuse_speed_bin(struct adreno_device *adreno_dev)
-{
-	unsigned int val;
-	unsigned int speed_bin[3];
-	struct kgsl_device *device = &adreno_dev->dev;
-
-	if (of_get_property(device->pdev->dev.of_node,
-			"qcom,gpu-speed-bin-vectors", NULL)) {
-		adreno_efuse_speed_bin_array(adreno_dev);
-		return;
-	}
-
-	if (!of_property_read_u32_array(device->pdev->dev.of_node,
-			"qcom,gpu-speed-bin", speed_bin, 3)) {
-		adreno_efuse_read_u32(adreno_dev, speed_bin[0], &val);
-		adreno_dev->speed_bin = (val & speed_bin[1]) >> speed_bin[2];
-		return;
-	}
-}
-
 static const struct {
 	int (*check)(struct adreno_device *adreno_dev);
 	void (*func)(struct adreno_device *adreno_dev);
 } a5xx_efuse_funcs[] = {
 	{ adreno_is_a530, a530_efuse_leakage },
 	{ adreno_is_a530, a530_efuse_speed_bin },
-	{ adreno_is_a504, a5xx_efuse_speed_bin },
-	{ adreno_is_a505, a5xx_efuse_speed_bin },
+	{ adreno_is_a505, a530_efuse_speed_bin },
 	{ adreno_is_a512, a530_efuse_speed_bin },
+	{ adreno_is_a509, a530_efuse_speed_bin },
 	{ adreno_is_a508, a530_efuse_speed_bin },
 };
 
@@ -140,7 +120,7 @@ static void a5xx_platform_setup(struct adreno_device *adreno_dev)
 {
 	struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 
-	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
+	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
 		gpudev->snapshot_data->sect_sizes->cp_meq = 32;
 		gpudev->snapshot_data->sect_sizes->cp_merciu = 1024;
 		gpudev->snapshot_data->sect_sizes->roq = 256;
@@ -157,7 +137,8 @@ static void a5xx_platform_setup(struct adreno_device *adreno_dev)
 		gpudev->vbif_xin_halt_ctrl0_mask =
 				A510_VBIF_XIN_HALT_CTRL0_MASK;
 	} else if (adreno_is_a540(adreno_dev) ||
-		adreno_is_a512(adreno_dev)) {
+		adreno_is_a512(adreno_dev) ||
+		adreno_is_a509(adreno_dev)) {
 		gpudev->snapshot_data->sect_sizes->cp_merciu = 1024;
 	}
 
@@ -535,7 +516,8 @@ static void a5xx_regulator_disable(struct adreno_device *adreno_dev)
 	unsigned int reg;
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 
-	if (adreno_is_a512(adreno_dev) || adreno_is_a508(adreno_dev))
+	if (adreno_is_a512(adreno_dev) || adreno_is_a509(adreno_dev) ||
+		adreno_is_a508(adreno_dev))
 		return;
 
 	/* If feature is not supported or not enabled */
@@ -1266,7 +1248,7 @@ static void a5xx_clk_set_options(struct adreno_device *adreno_dev,
 {
 
 	if (!adreno_is_a540(adreno_dev) && !adreno_is_a512(adreno_dev) &&
-		!adreno_is_a508(adreno_dev))
+		!adreno_is_a509(adreno_dev) && !adreno_is_a508(adreno_dev))
 		return;
 
 	/* Handle clock settings for GFX PSCBCs */
@@ -1546,7 +1528,7 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	 * Below CP registers are 0x0 by default, program init
 	 * values based on a5xx flavor.
 	 */
-	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
+	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev)) {
 		kgsl_regwrite(device, A5XX_CP_MEQ_THRESHOLDS, 0x20);
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x400);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x40000030);
@@ -1556,7 +1538,8 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x20);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x40000030);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_1, 0x20100D0A);
-	} else if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev)) {
+	} else if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev) ||
+			adreno_is_a509(adreno_dev)) {
 		kgsl_regwrite(device, A5XX_CP_MEQ_THRESHOLDS, 0x40);
 		kgsl_regwrite(device, A5XX_CP_MERCIU_SIZE, 0x400);
 		kgsl_regwrite(device, A5XX_CP_ROQ_THRESHOLDS_2, 0x80000060);
@@ -1572,10 +1555,11 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 	 * vtxFifo and primFifo thresholds default values
 	 * are different.
 	 */
-	if (adreno_is_a504_to_a506(adreno_dev) || adreno_is_a508(adreno_dev))
+	if (adreno_is_a505_or_a506(adreno_dev) || adreno_is_a508(adreno_dev))
 		kgsl_regwrite(device, A5XX_PC_DBG_ECO_CNTL,
 						(0x100 << 11 | 0x100 << 22));
-	else if (adreno_is_a510(adreno_dev) || adreno_is_a512(adreno_dev))
+	else if (adreno_is_a510(adreno_dev) || adreno_is_a512(adreno_dev) ||
+			adreno_is_a509(adreno_dev))
 		kgsl_regwrite(device, A5XX_PC_DBG_ECO_CNTL,
 						(0x200 << 11 | 0x200 << 22));
 	else
@@ -1651,7 +1635,8 @@ static void a5xx_start(struct adreno_device *adreno_dev)
 
 	kgsl_regwrite(device, A5XX_TPL1_MODE_CNTL, bit << 7);
 	kgsl_regwrite(device, A5XX_RB_MODE_CNTL, bit << 1);
-	if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev))
+	if (adreno_is_a540(adreno_dev) || adreno_is_a512(adreno_dev) ||
+		adreno_is_a509(adreno_dev))
 		kgsl_regwrite(device, A5XX_UCHE_DBG_ECO_CNTL_2, bit);
 
 	/* Disable All flat shading optimization */
@@ -1853,7 +1838,6 @@ static int _me_init_ucode_workarounds(struct adreno_device *adreno_dev)
 	switch (ADRENO_GPUREV(adreno_dev)) {
 	case ADRENO_REV_A510:
 		return 0x00000001; /* Ucode workaround for token end syncs */
-	case ADRENO_REV_A504:
 	case ADRENO_REV_A505:
 	case ADRENO_REV_A506:
 	case ADRENO_REV_A530:

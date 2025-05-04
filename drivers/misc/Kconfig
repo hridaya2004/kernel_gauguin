@@ -463,6 +463,14 @@ config LATTICE_ECP3_CONFIG
 
 	  If unsure, say N.
 
+config LDO_VIBRATOR
+	tristate "LDO Vibrator"
+	default n
+	help
+	  This option enables device driver support for the vibrator
+	  on the LDO line. The vibrator is controlled using the
+	  timed output class.
+
 config SRAM
 	bool "Generic on-chip SRAM driver"
 	depends on HAS_IOMEM
@@ -622,18 +630,19 @@ config QTI_MAXIM_FAN_CONTROLLER
 	  Also, this driver initializes the power for the fan controller
 	  and exposes sysfs node to control different speeds of fan.
 
-config KINECTICS_XR_NORDIC
-	tristate "Nordic Misc driver support in XR Reference devices"
-	help
-	  This driver supports Nordic Chip in XR Reference devices.
-	  This driver interfaces with SoC to Nordic chip over SPI and contains
-	  code to power up the Nordic chip and initializes SPI interface. Also,
-	  this also parses the gpios and interrupts from device tree and sets
-	  the gpios and interrupt handler for handling the interrupt.
+config SENSORS_TCS3490
+        tristate "AMS TCS3490 Sensor Driver"
+        depends on I2C
+        default n
+        help
+          If you say yes here you get support for the AMS tcs3490,
+          ALS and color light sensors.
+          This driver can also be build as module.
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
+source "drivers/misc/pn553/Kconfig"
 source "drivers/misc/ti-st/Kconfig"
 source "drivers/misc/lis3lv02d/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
@@ -646,7 +655,6 @@ source "drivers/misc/cxl/Kconfig"
 source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/fpr_FingerprintCard/Kconfig"
-source "drivers/misc/qrc/Kconfig"
 endmenu
 
 config OKL4_USER_VIPC
@@ -667,3 +675,16 @@ config OKL4_LINK_SHBUF
 	      transport. This driver presents the link to Linux as a character device
 	      which can be written to or read from to access the shared memory. An ioctl
 	      on the device is used to send a virtual interrupt to the partner cell.
+
+config SONY_EXT_UIM_CTRL
+	tristate "Sony External UIM Control Driver"
+	default n
+	help
+	  A misc driver related to UIM selector/enabler
+
+config POWERKEY_FORCECRASH
+	tristate "Force a crash on powerkey long press"
+	default n
+	help
+	  Say Y here if you want force crash functionality through power
+	  key. Triggers panic if power key is hold for more than 10secs.

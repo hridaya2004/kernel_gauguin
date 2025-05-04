@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2002,2007-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -426,8 +425,7 @@ void kgsl_mmu_put_gpuaddr(struct kgsl_memdesc *memdesc)
 		return;
 
 	if (!kgsl_memdesc_is_global(memdesc) &&
-			!kgsl_memdesc_is_reclaimed(memdesc) &&
-			(KGSL_MEMDESC_MAPPED & memdesc->priv))
+			!kgsl_memdesc_is_reclaimed(memdesc))
 		unmap_fail = kgsl_mmu_unmap(pagetable, memdesc);
 
 	/*
@@ -438,17 +436,10 @@ void kgsl_mmu_put_gpuaddr(struct kgsl_memdesc *memdesc)
 	if (PT_OP_VALID(pagetable, put_gpuaddr) && (unmap_fail == 0))
 		pagetable->pt_ops->put_gpuaddr(memdesc);
 
-	memdesc->pagetable = NULL;
-
-	/*
-	 * If SVM tries to take a GPU address it will lose the race until the
-	 * gpuaddr returns to zero so we shouldn't need to worry about taking a
-	 * lock here
-	 */
-
 	if (!kgsl_memdesc_is_global(memdesc))
 		memdesc->gpuaddr = 0;
 
+	memdesc->pagetable = NULL;
 }
 EXPORT_SYMBOL(kgsl_mmu_put_gpuaddr);
 
@@ -492,8 +483,6 @@ kgsl_mmu_unmap(struct kgsl_pagetable *pagetable,
 		size = kgsl_memdesc_footprint(memdesc);
 
 		ret = pagetable->pt_ops->mmu_unmap(pagetable, memdesc);
-		if (ret)
-			return ret;
 
 		atomic_dec(&pagetable->stats.entries);
 		atomic_long_sub(size, &pagetable->stats.mapped);
@@ -603,11 +592,10 @@ enum kgsl_mmutype kgsl_mmu_get_mmutype(struct kgsl_device *device)
 EXPORT_SYMBOL(kgsl_mmu_get_mmutype);
 
 bool kgsl_mmu_gpuaddr_in_range(struct kgsl_pagetable *pagetable,
-		uint64_t gpuaddr, uint64_t size)
+		uint64_t gpuaddr)
 {
 	if (PT_OP_VALID(pagetable, addr_in_range))
-		return pagetable->pt_ops->addr_in_range(pagetable,
-			 gpuaddr, size);
+		return pagetable->pt_ops->addr_in_range(pagetable, gpuaddr);
 
 	return false;
 }
@@ -643,7 +631,7 @@ EXPORT_SYMBOL(kgsl_mmu_get_qtimer_global_entry);
  */
 
 static bool nommu_gpuaddr_in_range(struct kgsl_pagetable *pagetable,
-		uint64_t gpuaddr, uint64_t size)
+		uint64_t gpuaddr)
 {
 	return (gpuaddr != 0) ? true : false;
 }

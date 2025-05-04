@@ -1156,7 +1156,6 @@ int kern_addr_valid(unsigned long addr)
 
 	return pfn_valid(pte_pfn(pte));
 }
-EXPORT_SYMBOL_GPL(kern_addr_valid);
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 #if !ARM64_SWAPPER_USES_SECTION_MAPS
 int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node,
@@ -1374,6 +1373,11 @@ void *__init fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
 			       round_up(offset + *size, SWAPPER_BLOCK_SIZE), prot);
 
 	return dt_virt;
+}
+
+int __init arch_ioremap_p4d_supported(void)
+{
+	return 0;
 }
 
 int __init arch_ioremap_pud_supported(void)

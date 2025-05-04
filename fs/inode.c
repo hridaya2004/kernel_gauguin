@@ -167,6 +167,8 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_wb_frn_history = 0;
 #endif
 
+	if (security_inode_alloc(inode))
+		goto out;
 	spin_lock_init(&inode->i_lock);
 	lockdep_set_class(&inode->i_lock, &sb->s_type->i_lock_key);
 
@@ -194,12 +196,11 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_fsnotify_mask = 0;
 #endif
 	inode->i_flctx = NULL;
-
-	if (unlikely(security_inode_alloc(inode)))
-		return -ENOMEM;
 	this_cpu_inc(nr_inodes);
 
 	return 0;
+out:
+	return -ENOMEM;
 }
 EXPORT_SYMBOL(inode_init_always);
 
@@ -617,10 +618,6 @@ again:
 			continue;
 
 		spin_lock(&inode->i_lock);
-		if (atomic_read(&inode->i_count)) {
-			spin_unlock(&inode->i_lock);
-			continue;
-		}
 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
 			spin_unlock(&inode->i_lock);
 			continue;
@@ -1587,31 +1584,25 @@ retry:
 }
 EXPORT_SYMBOL(iput);
 
-#ifdef CONFIG_BLOCK
 /**
  *	bmap	- find a block number in a file
- *	@inode:  inode owning the block number being requested
- *	@block: pointer containing the block to find
+ *	@inode: inode of file
+ *	@block: block to find
  *
- *	Replaces the value in *block with the block number on the device holding
- *	corresponding to the requested block number in the file.
- *	That is, asked for block 4 of inode 1 the function will replace the
- *	4 in *block, with disk block relative to the disk start that holds that
- *	block of the file.
- *
- *	Returns -EINVAL in case of error, 0 otherwise. If mapping falls into a
- *	hole, returns 0 and *block is also set to 0.
+ *	Returns the block number on the device holding the inode that
+ *	is the disk block number for the block of the file requested.
+ *	That is, asked for block 4 of inode 1 the function will return the
+ *	disk block relative to the disk start that holds that block of the
+ *	file.
  */
-int bmap(struct inode *inode, sector_t *block)
+sector_t bmap(struct inode *inode, sector_t block)
 {
-	if (!inode->i_mapping->a_ops->bmap)
-		return -EINVAL;
-
-	*block = inode->i_mapping->a_ops->bmap(inode->i_mapping, *block);
-	return 0;
+	sector_t res = 0;
+	if (inode->i_mapping->a_ops->bmap)
+		res = inode->i_mapping->a_ops->bmap(inode->i_mapping, block);
+	return res;
 }
 EXPORT_SYMBOL(bmap);
-#endif
 
 /*
  * With relative atime, only update atime if the previous atime is
@@ -1903,26 +1894,6 @@ int file_update_time(struct file *file)
 	return ret;
 }
 EXPORT_SYMBOL(file_update_time);
-
-/* Caller must hold the file's inode lock */
-int file_modified(struct file *file)
-{
-	int err;
-
-	/*
-	 * Clear the security bits if the process is not being run by root.
-	 * This keeps people from modifying setuid and setgid binaries.
-	 */
-	err = file_remove_privs(file);
-	if (err)
-		return err;
-
-	if (unlikely(file->f_mode & FMODE_NOCMTIME))
-		return 0;
-
-	return file_update_time(file);
-}
-EXPORT_SYMBOL(file_modified);
 
 int inode_needs_sync(struct inode *inode)
 {

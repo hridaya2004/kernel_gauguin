@@ -38,10 +38,6 @@
 
 #include <trace/events/kmem.h>
 
-#ifdef CONFIG_SLUB_DEBUG
-#include <linux/debugfs.h>
-#endif
-
 #include "internal.h"
 
 /*
@@ -265,7 +261,7 @@ static inline void *freelist_ptr(const struct kmem_cache *s, void *ptr,
 	 * freepointer to be restored incorrectly.
 	 */
 	return (void *)((unsigned long)ptr ^ s->random ^
-			swab((unsigned long)kasan_reset_tag((void *)ptr_addr)));
+			(unsigned long)kasan_reset_tag((void *)ptr_addr));
 #else
 	return ptr;
 #endif
@@ -1212,7 +1208,7 @@ static noinline int free_debug_processing(
 	struct kmem_cache_node *n = get_node(s, page_to_nid(page));
 	void *object = head;
 	int cnt = 0;
-	unsigned long flags;
+	unsigned long uninitialized_var(flags);
 	int ret = 0;
 
 	spin_lock_irqsave(&n->list_lock, flags);
@@ -2231,7 +2227,6 @@ redo:
 
 	c->page = NULL;
 	c->freelist = NULL;
-	c->tid = next_tid(c->tid);
 }
 
 /*
@@ -2365,6 +2360,8 @@ static inline void flush_slab(struct kmem_cache *s, struct kmem_cache_cpu *c)
 {
 	stat(s, CPUSLAB_FLUSH);
 	deactivate_slab(s, c->page, c->freelist, c);
+
+	c->tid = next_tid(c->tid);
 }
 
 /*
@@ -2651,7 +2648,6 @@ redo:
 
 	if (!freelist) {
 		c->page = NULL;
-		c->tid = next_tid(c->tid);
 		stat(s, DEACTIVATE_BYPASS);
 		goto new_slab;
 	}
@@ -2908,7 +2904,7 @@ static void __slab_free(struct kmem_cache *s, struct page *page,
 	struct page new;
 	unsigned long counters;
 	struct kmem_cache_node *n = NULL;
-	unsigned long flags;
+	unsigned long uninitialized_var(flags);
 
 	stat(s, FREE_SLOWPATH);
 
@@ -4438,7 +4434,6 @@ void *__kmalloc_track_caller(size_t size, gfp_t gfpflags, unsigned long caller)
 
 	return ret;
 }
-EXPORT_SYMBOL(__kmalloc_track_caller);
 
 #ifdef CONFIG_NUMA
 void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
@@ -4469,7 +4464,6 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfpflags,
 
 	return ret;
 }
-EXPORT_SYMBOL(__kmalloc_node_track_caller);
 #endif
 
 #ifdef CONFIG_SYSFS
@@ -5782,8 +5776,7 @@ static char *create_unique_id(struct kmem_cache *s)
 	char *name = kmalloc(ID_STR_LENGTH, GFP_KERNEL);
 	char *p = name;
 
-	if (!name)
-		return ERR_PTR(-ENOMEM);
+	BUG_ON(!name);
 
 	*p++ = ':';
 	/*
@@ -5865,8 +5858,6 @@ static int sysfs_slab_add(struct kmem_cache *s)
 		 * for the symlinks.
 		 */
 		name = create_unique_id(s);
-		if (IS_ERR(name))
-			return PTR_ERR(name);
 	}
 
 	s->kobj.kset = kset;
@@ -5939,85 +5930,6 @@ struct saved_alias {
 
 static struct saved_alias *alias_list;
 
-#ifdef CONFIG_SLUB_DEBUG
-static struct dentry *slab_debugfs_top;
-
-static int alloc_trace_locations(struct seq_file *seq, struct kmem_cache *s,
-			enum track_item alloc)
-{
-	unsigned long i;
-	struct loc_track t = { 0, 0, NULL };
-	int node;
-	unsigned long *map = kmalloc(BITS_TO_LONGS(oo_objects(s->max)) *
-			sizeof(unsigned long), GFP_KERNEL);
-	struct kmem_cache_node *n;
-
-	if (!map || !alloc_loc_track(&t, PAGE_SIZE / sizeof(struct location),
-			GFP_KERNEL)) {
-		kfree(map);
-		return -ENOMEM;
-	}
-	/* Push back cpu slabs */
-	flush_all(s);
-
-	for_each_kmem_cache_node(s, node, n) {
-		unsigned long flags;
-		struct page *page;
-
-		if (!atomic_long_read(&n->nr_slabs))
-			continue;
-
-		spin_lock_irqsave(&n->list_lock, flags);
-		list_for_each_entry(page, &n->partial, lru)
-			process_slab(&t, s, page, alloc, map);
-		list_for_each_entry(page, &n->full, lru)
-			process_slab(&t, s, page, alloc, map);
-		spin_unlock_irqrestore(&n->list_lock, flags);
-	}
-
-	for (i = 0; i < t.count; i++) {
-		struct location *l = &t.loc[i];
-
-		seq_printf(seq,
-		"alloc_list: call_site=%pS count=%zu object_size=%zu slab_size=%zu slab_name=%s\n",
-			l->addr, l->count, s->object_size, s->size, s->name);
-	}
-
-	free_loc_track(&t);
-	kfree(map);
-	return 0;
-}
-
-static int slab_debug_alloc_trace(struct seq_file *seq,
-					void *ignored)
-{
-
-	struct kmem_cache *slab;
-
-	list_for_each_entry(slab, &slab_caches, list) {
-		if (!(slab->flags & SLAB_STORE_USER))
-			continue;
-		alloc_trace_locations(seq, slab, TRACK_ALLOC);
-	}
-
-	return 0;
-}
-
-static int slab_debug_alloc_trace_open(struct inode *inode,
-					struct file *file)
-{
-	return single_open(file, slab_debug_alloc_trace,
-					inode->i_private);
-}
-
-static const struct file_operations slab_debug_alloc_fops = {
-	.open    = slab_debug_alloc_trace_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = single_release,
-};
-#endif
-
 static int sysfs_slab_alias(struct kmem_cache *s, const char *name)
 {
 	struct saved_alias *al;
@@ -6063,22 +5975,6 @@ static int __init slab_sysfs_init(void)
 			pr_err("SLUB: Unable to add boot slab %s to sysfs\n",
 			       s->name);
 	}
-
-#ifdef CONFIG_SLUB_DEBUG
-	if (slub_debug) {
-		slab_debugfs_top = debugfs_create_dir("slab", NULL);
-		if (!slab_debugfs_top) {
-			pr_err("Couldn't create slab debugfs directory\n");
-			return -ENODEV;
-		}
-
-		if (!debugfs_create_file("alloc_trace", 0400, slab_debugfs_top,
-					NULL, &slab_debug_alloc_fops)) {
-			pr_err("Couldn't create slab/tests debugfs directory\n");
-			return -ENODEV;
-		}
-	}
-#endif
 
 	while (alias_list) {
 		struct saved_alias *al = alias_list;

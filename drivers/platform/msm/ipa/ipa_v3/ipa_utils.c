@@ -2883,6 +2883,79 @@ static const struct ipa_ep_configuration ipa3_ep_mapping
 
 };
 
+static struct ipa3_mem_partition ipa_3_5_1_mem_part = {
+	.ofst_start				= 0x280,
+	.v4_flt_hash_ofst		= 0x288,
+	.v4_flt_hash_size		=  0x78,
+	.v4_flt_hash_size_ddr		= 0x4000,
+	.v4_flt_nhash_ofst		= 0x308,
+	.v4_flt_nhash_size		= 0x78,
+	.v4_flt_nhash_size_ddr		= 0x4000,
+	.v6_flt_hash_ofst		= 0x388,
+	.v6_flt_hash_size		= 0x78,
+	.v6_flt_hash_size_ddr		= 0x4000,
+	.v6_flt_nhash_ofst		= 0x408,
+	.v6_flt_nhash_size		= 0x78,
+	.v6_flt_nhash_size_ddr		= 0x4000,
+	.v4_rt_num_index		= 0xf,
+	.v4_modem_rt_index_lo		= 0x0,
+	.v4_modem_rt_index_hi		= 0x7,
+	.v4_apps_rt_index_lo		= 0x8,
+	.v4_apps_rt_index_hi		= 0xe,
+	.v4_rt_hash_ofst		= 0x488,
+	.v4_rt_hash_size		= 0x78,
+	.v4_rt_hash_size_ddr		= 0x4000,
+	.v4_rt_nhash_ofst		= 0x508,
+	.v4_rt_nhash_size		= 0x78,
+	.v4_rt_nhash_size_ddr		= 0x4000,
+	.v6_rt_num_index		= 0xf,
+	.v6_modem_rt_index_lo		= 0x0,
+	.v6_modem_rt_index_hi		= 0x7,
+	.v6_apps_rt_index_lo		= 0x8,
+	.v6_apps_rt_index_hi		= 0xe,
+	.v6_rt_hash_ofst		= 0x588,
+	.v6_rt_hash_size		= 0x78,
+	.v6_rt_hash_size_ddr		= 0x4000,
+	.v6_rt_nhash_ofst		= 0x608,
+	.v6_rt_nhash_size		= 0x78,
+	.v6_rt_nhash_size_ddr		= 0x4000,
+	.modem_hdr_ofst			= 0x688,
+	.modem_hdr_size			= 0x140,
+	.apps_hdr_ofst			= 0x7c8,
+	.apps_hdr_size			= 0x0,
+	.apps_hdr_size_ddr		= 0x800,
+	.modem_hdr_proc_ctx_ofst	= 0x7d0,
+	.modem_hdr_proc_ctx_size	= 0x200,
+	.apps_hdr_proc_ctx_ofst		= 0x9d0,
+	.apps_hdr_proc_ctx_size		= 0x200,
+	.apps_hdr_proc_ctx_size_ddr	= 0x0,
+	.modem_comp_decomp_ofst		= 0x0,
+	.modem_comp_decomp_size		= 0x0,
+	.modem_ofst			= 0xbd8,
+	.modem_size			= 0x1024,
+	.apps_v4_flt_hash_ofst		= 0x2000,
+	.apps_v4_flt_hash_size		= 0x0,
+	.apps_v4_flt_nhash_ofst		= 0x2000,
+	.apps_v4_flt_nhash_size		= 0x0,
+	.apps_v6_flt_hash_ofst		= 0x2000,
+	.apps_v6_flt_hash_size		= 0x0,
+	.apps_v6_flt_nhash_ofst		= 0x2000,
+	.apps_v6_flt_nhash_size		= 0x0,
+	.uc_info_ofst			= 0x80,
+	.uc_info_size			= 0x200,
+	.end_ofst			= 0x2000,
+	.apps_v4_rt_hash_ofst		= 0x2000,
+	.apps_v4_rt_hash_size		= 0x0,
+	.apps_v4_rt_nhash_ofst		= 0x2000,
+	.apps_v4_rt_nhash_size		= 0x0,
+	.apps_v6_rt_hash_ofst		= 0x2000,
+	.apps_v6_rt_hash_size		= 0x0,
+	.apps_v6_rt_nhash_ofst		= 0x2000,
+	.apps_v6_rt_nhash_size		= 0x0,
+	.uc_descriptor_ram_ofst		= 0x1c00,
+	.uc_descriptor_ram_size		= 0x400,
+};
+
 static struct ipa3_mem_partition ipa_4_1_mem_part = {
 	.ofst_start				= 0x280,
 	.v4_flt_hash_ofst		= 0x288,
@@ -5294,8 +5367,8 @@ int ipa3_cfg_ep_holb(u32 clnt_hdl, const struct ipa_ep_cfg_holb *ep_holb)
 	ipa3_ctx->ep[clnt_hdl].holb.en = IPA_HOLB_TMR_EN;
 	ipahal_write_reg_n_fields(IPA_ENDP_INIT_HOL_BLOCK_EN_n,
 		clnt_hdl, ep_holb);
-	/* For targets > IPA_4.0 issue requires HOLB_EN to be written twice */
-	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_0)
+	/* IPA4.5 issue requires HOLB_EN to be written twice */
+	if (ipa3_ctx->ipa_hw_type >= IPA_HW_v4_5)
 		ipahal_write_reg_n_fields(IPA_ENDP_INIT_HOL_BLOCK_EN_n,
 			clnt_hdl, ep_holb);
 
@@ -5623,6 +5696,9 @@ int ipa3_straddle_boundary(u32 start, u32 end, u32 boundary)
 int ipa3_init_mem_partition(enum ipa_hw_type type)
 {
 	switch (type) {
+	case IPA_HW_v3_5_1:
+		ipa3_ctx->ctrl->mem_partition = &ipa_3_5_1_mem_part;
+		break;
 	case IPA_HW_v4_1:
 		ipa3_ctx->ctrl->mem_partition = &ipa_4_1_mem_part;
 		break;
@@ -5645,7 +5721,6 @@ int ipa3_init_mem_partition(enum ipa_hw_type type)
 	case IPA_HW_v3_0:
 	case IPA_HW_v3_1:
 	case IPA_HW_v3_5:
-	case IPA_HW_v3_5_1:
 	case IPA_HW_v4_0:
 		IPAERR("unsupported version %d\n", type);
 		return -EPERM;
@@ -6070,21 +6145,12 @@ static int __ipa3_alloc_counter_hdl
 	return id;
 }
 
-int ipa3_alloc_counter_id(struct ipa_ioc_flt_rt_counter_alloc *header)
+int ipa3_alloc_counter_id(struct ipa_ioc_flt_rt_counter_alloc *counter)
 {
 	int i, unused_cnt, unused_max, unused_start_id;
-	struct ipa_ioc_flt_rt_counter_alloc *counter;
-
-	counter = kmem_cache_zalloc(ipa3_ctx->fnr_stats_cache, GFP_KERNEL);
-	if (!counter) {
-		IPAERR_RL("failed to alloc fnr stats counter object\n");
-		spin_unlock(&ipa3_ctx->flt_rt_counters.hdl_lock);
-		return -ENOMEM;
-	}
 
 	idr_preload(GFP_KERNEL);
 	spin_lock(&ipa3_ctx->flt_rt_counters.hdl_lock);
-	memcpy(counter, header, sizeof(struct ipa_ioc_flt_rt_counter_alloc));
 
 	/* allocate hw counters */
 	counter->hw_counter.start_id = 0;
@@ -6185,7 +6251,7 @@ mark_hw_cnt:
 	unused_start_id = counter->hw_counter.start_id;
 	if (unused_start_id < 1 ||
 		unused_start_id > IPA_FLT_RT_HW_COUNTER) {
-		IPAERR_RL("unexpected hw_counter start id %d\n",
+		IPAERR("unexpected hw_counter start id %d\n",
 			   unused_start_id);
 		goto err;
 	}
@@ -6200,7 +6266,7 @@ mark_sw_cnt:
 		- IPA_FLT_RT_HW_COUNTER;
 	if (unused_start_id < 1 ||
 		unused_start_id > IPA_FLT_RT_SW_COUNTER) {
-		IPAERR_RL("unexpected sw_counter start id %d\n",
+		IPAERR("unexpected sw_counter start id %d\n",
 			   unused_start_id);
 		goto err;
 	}
@@ -6210,14 +6276,12 @@ mark_sw_cnt:
 done:
 	/* get a handle from idr for dealloc */
 	counter->hdl = __ipa3_alloc_counter_hdl(counter);
-	memcpy(header, counter, sizeof(struct ipa_ioc_flt_rt_counter_alloc));
 	spin_unlock(&ipa3_ctx->flt_rt_counters.hdl_lock);
 	idr_preload_end();
 	return 0;
 
 err:
 	counter->hdl = -1;
-	kmem_cache_free(ipa3_ctx->fnr_stats_cache, counter);
 	spin_unlock(&ipa3_ctx->flt_rt_counters.hdl_lock);
 	idr_preload_end();
 	return -ENOMEM;
@@ -6231,31 +6295,30 @@ void ipa3_counter_remove_hdl(int hdl)
 	spin_lock(&ipa3_ctx->flt_rt_counters.hdl_lock);
 	counter = idr_find(&ipa3_ctx->flt_rt_counters.hdl, hdl);
 	if (counter == NULL) {
-		IPAERR_RL("unexpected hdl %d\n", hdl);
+		IPAERR("unexpected hdl %d\n", hdl);
 		goto err;
 	}
 	/* remove counters belong to this hdl, set used back to 0 */
 	offset = counter->hw_counter.start_id - 1;
 	if (offset >= 0 && (offset + counter->hw_counter.num_counters)
 		< IPA_FLT_RT_HW_COUNTER) {
-		memset(&ipa3_ctx->flt_rt_counters.used_hw[offset],
+		memset(&ipa3_ctx->flt_rt_counters.used_hw + offset,
 			   0, counter->hw_counter.num_counters * sizeof(bool));
 	} else {
-		IPAERR_RL("unexpected hdl %d\n", hdl);
+		IPAERR("unexpected hdl %d\n", hdl);
 		goto err;
 	}
 	offset = counter->sw_counter.start_id - 1 - IPA_FLT_RT_HW_COUNTER;
 	if (offset >= 0 && (offset + counter->sw_counter.num_counters)
 		< IPA_FLT_RT_SW_COUNTER) {
-		memset(&ipa3_ctx->flt_rt_counters.used_sw[offset],
+		memset(&ipa3_ctx->flt_rt_counters.used_sw + offset,
 		   0, counter->sw_counter.num_counters * sizeof(bool));
 	} else {
-		IPAERR_RL("unexpected hdl %d\n", hdl);
+		IPAERR("unexpected hdl %d\n", hdl);
 		goto err;
 	}
 	/* remove the handle */
 	idr_remove(&ipa3_ctx->flt_rt_counters.hdl, hdl);
-	kmem_cache_free(ipa3_ctx->fnr_stats_cache, counter);
 err:
 	spin_unlock(&ipa3_ctx->flt_rt_counters.hdl_lock);
 }
@@ -6272,10 +6335,8 @@ void ipa3_counter_id_remove_all(void)
 	memset(&ipa3_ctx->flt_rt_counters.used_sw, 0,
 		   sizeof(ipa3_ctx->flt_rt_counters.used_sw));
 	/* remove all handles */
-	idr_for_each_entry(&ipa3_ctx->flt_rt_counters.hdl, counter, hdl) {
+	idr_for_each_entry(&ipa3_ctx->flt_rt_counters.hdl, counter, hdl)
 		idr_remove(&ipa3_ctx->flt_rt_counters.hdl, hdl);
-		kmem_cache_free(ipa3_ctx->fnr_stats_cache, counter);
-	}
 	spin_unlock(&ipa3_ctx->flt_rt_counters.hdl_lock);
 }
 
@@ -6816,7 +6877,7 @@ u32 ipa3_get_num_pipes(void)
 
 /**
  * ipa3_disable_apps_wan_cons_deaggr()-
- * set ipa3_ctx->ipa_client_apps_wan_cons_agg_gro
+ * set ipa_ctx->ipa_client_apps_wan_cons_agg_gro
  *
  * Return value: 0 or negative in case of failure
  */
@@ -7769,11 +7830,6 @@ static int _ipa_suspend_resume_pipe(enum ipa_client_type client, bool suspend)
 	int ipa_ep_idx, coal_ep_idx;
 	struct ipa3_ep_context *ep;
 	int res;
-
-	if (ipa3_ctx->ipa_hw_type < IPA_HW_v4_0) {
-		IPAERR("not supported\n");
-		return -EPERM;
-	}
 
 	ipa_ep_idx = ipa3_get_ep_mapping(client);
 	if (ipa_ep_idx < 0) {

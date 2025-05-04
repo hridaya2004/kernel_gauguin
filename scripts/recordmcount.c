@@ -132,7 +132,6 @@ uwrite(int const fd, void const *const buf, size_t const count)
 {
 	size_t cnt = count;
 	off_t idx = 0;
-	void *p = NULL;
 
 	file_updated = 1;
 
@@ -140,10 +139,7 @@ uwrite(int const fd, void const *const buf, size_t const count)
 		off_t aoffset = (file_ptr + count) - file_end;
 
 		if (aoffset > file_append_size) {
-			p = realloc(file_append, aoffset);
-			if (!p)
-				free(file_append);
-			file_append = p;
+			file_append = realloc(file_append, aoffset);
 			file_append_size = aoffset;
 		}
 		if (!file_append) {

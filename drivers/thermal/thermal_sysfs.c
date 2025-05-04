@@ -18,7 +18,6 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/jiffies.h>
-#include <linux/vmalloc.h>
 
 #include "thermal_core.h"
 
@@ -1051,13 +1050,12 @@ static const struct attribute_group cooling_device_stats_attr_group = {
 
 static void cooling_device_stats_setup(struct thermal_cooling_device *cdev)
 {
-	const struct attribute_group *stats_attr_group = NULL;
 	struct cooling_dev_stats *stats;
 	unsigned long states;
 	int var;
 
 	if (cdev->ops->get_max_state(cdev, &states))
-		goto out;
+		return;
 
 	states++; /* Total number of states is highest state + 1 */
 
@@ -1065,9 +1063,9 @@ static void cooling_device_stats_setup(struct thermal_cooling_device *cdev)
 	var += sizeof(*stats->time_in_state) * states;
 	var += sizeof(*stats->trans_table) * states * states;
 
-	stats = vzalloc(var);
+	stats = kzalloc(var, GFP_KERNEL);
 	if (!stats)
-		goto out;
+		return;
 
 	stats->time_in_state = (ktime_t *)(stats + 1);
 	stats->trans_table = (unsigned int *)(stats->time_in_state + states);
@@ -1077,17 +1075,14 @@ static void cooling_device_stats_setup(struct thermal_cooling_device *cdev)
 
 	spin_lock_init(&stats->lock);
 
-	stats_attr_group = &cooling_device_stats_attr_group;
-
-out:
 	/* Fill the empty slot left in cooling_device_attr_groups */
 	var = ARRAY_SIZE(cooling_device_attr_groups) - 2;
-	cooling_device_attr_groups[var] = stats_attr_group;
+	cooling_device_attr_groups[var] = &cooling_device_stats_attr_group;
 }
 
 static void cooling_device_stats_destroy(struct thermal_cooling_device *cdev)
 {
-	vfree(cdev->stats);
+	kfree(cdev->stats);
 	cdev->stats = NULL;
 }
 
@@ -1147,26 +1142,6 @@ trip_point_show(struct device *dev, struct device_attribute *attr, char *buf)
 		return sprintf(buf, "-1\n");
 	else
 		return sprintf(buf, "%d\n", instance->trip);
-}
-
-ssize_t trip_point_store(struct device *dev, struct device_attribute *attr,
-			 const char *buf, size_t count)
-{
-	struct thermal_instance *instance;
-	int ret, trip;
-
-	ret = kstrtoint(buf, 0, &trip);
-	if (ret)
-		return ret;
-
-	instance = container_of(attr, struct thermal_instance, attr);
-
-	if (trip >= instance->tz->trips || trip < THERMAL_TRIPS_NONE)
-		return -EINVAL;
-
-	instance->trip = trip;
-
-	return count;
 }
 
 ssize_t

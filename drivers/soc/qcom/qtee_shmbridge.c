@@ -2,7 +2,7 @@
 /*
  * QTI TEE shared memory bridge driver
  *
- * Copyright (c) 2019,2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -122,6 +122,12 @@ static int32_t qtee_shmbridge_enable(bool enable)
 		pr_warn("shmbridge isn't enabled\n");
 		return ret;
 	}
+
+#if defined(CONFIG_ARCH_SDM845) || \
+	defined(CONFIG_ARCH_SM8150) || \
+	defined(CONFIG_ARCH_TRINKET)
+	return ret;
+#endif
 
 	desc.arginfo = TZ_SHM_BRIDGE_ENABLE_PARAM_ID;
 	ret = scm_call2(TZ_SHM_BRIDGE_ENABLE, &desc);

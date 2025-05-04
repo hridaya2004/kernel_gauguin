@@ -114,8 +114,7 @@ MODULE_PARM_DESC(chain_mode, "To use chain instead of ring mode");
 static irqreturn_t stmmac_interrupt(int irq, void *dev_id);
 
 #ifdef CONFIG_DEBUG_FS
-static const struct net_device_ops stmmac_netdev_ops;
-static void stmmac_init_fs(struct net_device *dev);
+static int stmmac_init_fs(struct net_device *dev);
 static void stmmac_exit_fs(struct net_device *dev);
 #endif
 
@@ -4035,52 +4034,45 @@ static const struct file_operations stmmac_dma_cap_fops = {
 	.release = single_release,
 };
 
-/* Use network device events to rename debugfs file entries.
- */
-static int stmmac_device_event(struct notifier_block *unused,
-			       unsigned long event, void *ptr)
-{
-	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
-	struct stmmac_priv *priv = netdev_priv(dev);
-
-	if (dev->netdev_ops != &stmmac_netdev_ops)
-		goto done;
-
-	switch (event) {
-	case NETDEV_CHANGENAME:
-		if (priv->dbgfs_dir)
-			priv->dbgfs_dir = debugfs_rename(stmmac_fs_dir,
-							 priv->dbgfs_dir,
-							 stmmac_fs_dir,
-							 dev->name);
-		break;
-	}
-done:
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block stmmac_notifier = {
-	.notifier_call = stmmac_device_event,
-};
-
-static void stmmac_init_fs(struct net_device *dev)
+static int stmmac_init_fs(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
-
-	rtnl_lock();
 
 	/* Create per netdev entries */
 	priv->dbgfs_dir = debugfs_create_dir(dev->name, stmmac_fs_dir);
 
+	if (!priv->dbgfs_dir || IS_ERR(priv->dbgfs_dir)) {
+		netdev_err(priv->dev, "ERROR failed to create debugfs directory\n");
+
+		return -ENOMEM;
+	}
+
 	/* Entry to report DMA RX/TX rings */
-	debugfs_create_file("descriptors_status", 0444, priv->dbgfs_dir, dev,
-			    &stmmac_rings_status_fops);
+	priv->dbgfs_rings_status =
+		debugfs_create_file("descriptors_status", 0444,
+				    priv->dbgfs_dir, dev,
+				    &stmmac_rings_status_fops);
+
+	if (!priv->dbgfs_rings_status || IS_ERR(priv->dbgfs_rings_status)) {
+		netdev_err(priv->dev, "ERROR creating stmmac ring debugfs file\n");
+		debugfs_remove_recursive(priv->dbgfs_dir);
+
+		return -ENOMEM;
+	}
 
 	/* Entry to report the DMA HW features */
-	debugfs_create_file("dma_cap", 0444, priv->dbgfs_dir, dev,
-			    &stmmac_dma_cap_fops);
+	priv->dbgfs_dma_cap = debugfs_create_file("dma_cap", 0444,
+						  priv->dbgfs_dir,
+						  dev, &stmmac_dma_cap_fops);
 
-	rtnl_unlock();
+	if (!priv->dbgfs_dma_cap || IS_ERR(priv->dbgfs_dma_cap)) {
+		netdev_err(priv->dev, "ERROR creating stmmac MMC debugfs file\n");
+		debugfs_remove_recursive(priv->dbgfs_dir);
+
+		return -ENOMEM;
+	}
+
+	return 0;
 }
 
 static void stmmac_exit_fs(struct net_device *dev)
@@ -4418,7 +4410,10 @@ int stmmac_dvr_probe(struct device *device,
 	}
 
 #ifdef CONFIG_DEBUG_FS
-	stmmac_init_fs(ndev);
+	ret = stmmac_init_fs(ndev);
+	if (ret < 0)
+		netdev_warn(priv->dev, "%s: failed debugFS registration\n",
+			    __func__);
 #endif
 
 	return ret;
@@ -4456,14 +4451,14 @@ int stmmac_dvr_remove(struct device *dev)
 
 	netdev_info(priv->dev, "%s: removing driver", __func__);
 
+#ifdef CONFIG_DEBUG_FS
+	stmmac_exit_fs(ndev);
+#endif
 	stmmac_stop_all_dma(priv);
 
 	stmmac_mac_set(priv, priv->ioaddr, false);
 	netif_carrier_off(ndev);
 	unregister_netdev(ndev);
-#ifdef CONFIG_DEBUG_FS
-	stmmac_exit_fs(ndev);
-#endif
 	if (priv->plat->stmmac_rst)
 		reset_control_assert(priv->plat->stmmac_rst);
 	clk_disable_unprepare(priv->plat->pclk);
@@ -4678,9 +4673,16 @@ static int __init stmmac_init(void)
 {
 #ifdef CONFIG_DEBUG_FS
 	/* Create debugfs main directory if it doesn't exist yet */
-	if (!stmmac_fs_dir)
+	if (!stmmac_fs_dir) {
 		stmmac_fs_dir = debugfs_create_dir(STMMAC_RESOURCE_NAME, NULL);
-	register_netdevice_notifier(&stmmac_notifier);
+
+		if (!stmmac_fs_dir || IS_ERR(stmmac_fs_dir)) {
+			pr_err("ERROR %s, debugfs create directory failed\n",
+			       STMMAC_RESOURCE_NAME);
+
+			return -ENOMEM;
+		}
+	}
 #endif
 
 	return 0;
@@ -4689,7 +4691,6 @@ static int __init stmmac_init(void)
 static void __exit stmmac_exit(void)
 {
 #ifdef CONFIG_DEBUG_FS
-	unregister_netdevice_notifier(&stmmac_notifier);
 	debugfs_remove_recursive(stmmac_fs_dir);
 #endif
 }

@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  */
-
-#include <linux/workqueue.h>
 
 #include "msm_cvp.h"
 #include "cvp_hfi.h"
@@ -18,8 +15,6 @@ struct cvp_power_level {
 	unsigned long bw_sum;
 };
 
-static struct workqueue_struct *fence_workqueue;
-
 void print_internal_buffer(u32 tag, const char *str,
 		struct msm_cvp_inst *inst, struct msm_cvp_internal_buffer *cbuf)
 {
@@ -30,7 +25,7 @@ void print_internal_buffer(u32 tag, const char *str,
 		dprintk(tag,
 		"%s: %x : idx %2d fd %d off %d %s size %d flags %#x iova %#x",
 		str, hash32_ptr(inst->session), cbuf->buf.index, cbuf->buf.fd,
-		cbuf->buf.offset, cbuf->smem.dma_buf->name, cbuf->buf.size,
+		cbuf->buf.offset, cbuf->smem.dma_buf->buf_name, cbuf->buf.size,
 		cbuf->buf.flags, cbuf->smem.device_addr);
 	} else {
 		dprintk(tag,
@@ -443,7 +438,7 @@ static int msm_cvp_map_buf_user_persist(struct msm_cvp_inst *inst,
 
 	dprintk(CVP_DBG,
 	"%s: %x : fd %d %s size %d", "map persist", hash32_ptr(inst->session),
-	cbuf->smem.fd, cbuf->smem.dma_buf->name, cbuf->smem.size);
+	cbuf->smem.fd, cbuf->smem.dma_buf->buf_name, cbuf->smem.size);
 	return rc;
 
 exit:
@@ -928,7 +923,9 @@ static int msm_cvp_session_process_hfi(
 		dprintk(CVP_ERR, "%s incorrect packet %d, %x\n", __func__,
 				in_pkt->pkt_data[0],
 				in_pkt->pkt_data[1]);
-		goto exit;
+		offset = in_offset;
+		buf_num = in_buf_num;
+		signal = HAL_NO_RESP;
 	} else {
 		offset = cvp_hfi_defs[pkt_idx].buf_offset;
 		buf_num = cvp_hfi_defs[pkt_idx].buf_num;
@@ -997,7 +994,7 @@ exit:
 }
 
 #define CVP_FENCE_RUN	0x100
-static void msm_cvp_thread_fence_run(struct work_struct *data)
+static int msm_cvp_thread_fence_run(void *data)
 {
 	int i, rc = 0;
 	unsigned long timeout_ms = 100;
@@ -1017,12 +1014,12 @@ static void msm_cvp_thread_fence_run(struct work_struct *data)
 		do_exit(-EINVAL);
 	}
 
-	fence_thread_data =
-		container_of(data, struct msm_cvp_fence_thread_data, work);
+	fence_thread_data = data;
 	inst = fence_thread_data->inst;
 	if (!inst) {
 		dprintk(CVP_ERR, "%s Wrong inst %pK\n", __func__, inst);
 		rc = -EINVAL;
+		return rc;
 	}
 	inst->cur_cmd_type = CVP_FENCE_RUN;
 	in_fence_pkt = (struct cvp_kmd_hfi_fence_packet *)
@@ -1317,6 +1314,7 @@ exit:
 	kmem_cache_free(cvp_driver->fence_data_cache, fence_thread_data);
 	inst->cur_cmd_type = 0;
 	cvp_put_inst(inst);
+	do_exit(rc);
 }
 
 static int msm_cvp_session_process_hfi_fence(
@@ -1324,6 +1322,7 @@ static int msm_cvp_session_process_hfi_fence(
 	struct cvp_kmd_arg *arg)
 {
 	static int thread_num;
+	struct task_struct *thread;
 	int rc = 0;
 	char thread_fence_name[32];
 	int pkt_idx;
@@ -1390,12 +1389,6 @@ static int msm_cvp_session_process_hfi_fence(
 	if (rc)
 		goto free_and_exit;
 
-	if (fence_workqueue == NULL) {
-		fence_workqueue = alloc_workqueue("cvp_fence_workqueue", __WQ_LEGACY
-						| WQ_MEM_RECLAIM | WQ_UNBOUND
-						| WQ_HIGHPRI, 1);
-	}
-
 	thread_num = thread_num + 1;
 	fence_thread_data->inst = inst;
 	fence_thread_data->device_id = (unsigned int)inst->core->id;
@@ -1404,9 +1397,13 @@ static int msm_cvp_session_process_hfi_fence(
 	fence_thread_data->arg_type = arg->type;
 	snprintf(thread_fence_name, sizeof(thread_fence_name),
 				"thread_fence_%d", thread_num);
-
-	INIT_WORK(&fence_thread_data->work, msm_cvp_thread_fence_run);
-	queue_work(fence_workqueue, &fence_thread_data->work);
+	thread = kthread_run(msm_cvp_thread_fence_run,
+			fence_thread_data, thread_fence_name);
+	if (!thread) {
+		dprintk(CVP_ERR, "%s fail to create kthread\n", __func__);
+		rc = -ECHILD;
+		goto free_and_exit;
+	}
 
 	return 0;
 
@@ -2350,7 +2347,7 @@ int msm_cvp_session_deinit(struct msm_cvp_inst *inst)
 				"remove from frame list",
 				hash32_ptr(inst->session),
 				buf->fd, buf->offset, buf->size,
-				buf->dbuf->name);
+				buf->dbuf->buf_name);
 
 			list_del(&frame_buf->list);
 			kmem_cache_free(cvp_driver->frame_buf_cache,

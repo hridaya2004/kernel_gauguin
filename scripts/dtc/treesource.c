@@ -124,6 +124,27 @@ static void write_propval_int(FILE *f, const char *p, size_t len, size_t width)
 	}
 }
 
+static bool has_data_type_information(struct marker *m)
+{
+	return m->type >= TYPE_UINT8;
+}
+
+static struct marker *next_type_marker(struct marker *m)
+{
+	while (m && !has_data_type_information(m))
+		m = m->next;
+	return m;
+}
+
+size_t type_marker_length(struct marker *m)
+{
+	struct marker *next = next_type_marker(m->next);
+
+	if (next)
+		return next->offset - m->offset;
+	return 0;
+}
+
 static const char *delim_start[] = {
 	[TYPE_UINT8] = "[",
 	[TYPE_UINT16] = "/bits/ 16 <",
@@ -138,28 +159,6 @@ static const char *delim_end[] = {
 	[TYPE_UINT64] = ">",
 	[TYPE_STRING] = "",
 };
-
-static void add_string_markers(struct property *prop)
-{
-	int l, len = prop->val.len;
-	const char *p = prop->val.val;
-
-	for (l = strlen(p) + 1; l < len; l += strlen(p + l) + 1) {
-		struct marker *m, **nextp;
-
-		m = xmalloc(sizeof(*m));
-		m->offset = l;
-		m->type = TYPE_STRING;
-		m->ref = NULL;
-		m->next = NULL;
-
-		/* Find the end of the markerlist */
-		nextp = &prop->val.markers;
-		while (*nextp)
-			nextp = &((*nextp)->next);
-		*nextp = m;
-	}
-}
 
 static enum markertype guess_value_type(struct property *prop)
 {
@@ -186,8 +185,6 @@ static enum markertype guess_value_type(struct property *prop)
 
 	if ((p[len-1] == '\0') && (nnotstring == 0) && (nnul <= (len-nnul))
 	    && (nnotstringlbl == 0)) {
-		if (nnul > 1)
-			add_string_markers(prop);
 		return TYPE_STRING;
 	} else if (((len % sizeof(cell_t)) == 0) && (nnotcelllbl == 0)) {
 		return TYPE_UINT32;
@@ -232,41 +229,26 @@ static void write_propval(FILE *f, struct property *prop)
 		size_t chunk_len = (m->next ? m->next->offset : len) - m->offset;
 		size_t data_len = type_marker_length(m) ? : len - m->offset;
 		const char *p = &prop->val.val[m->offset];
-		struct marker *m_phandle;
 
-		if (is_type_marker(m->type)) {
+		if (has_data_type_information(m)) {
 			emit_type = m->type;
 			fprintf(f, " %s", delim_start[emit_type]);
 		} else if (m->type == LABEL)
 			fprintf(f, " %s:", m->ref);
+		else if (m->offset)
+			fputc(' ', f);
 
-		if (emit_type == TYPE_NONE || chunk_len == 0)
+		if (emit_type == TYPE_NONE) {
+			assert(chunk_len == 0);
 			continue;
+		}
 
 		switch(emit_type) {
 		case TYPE_UINT16:
 			write_propval_int(f, p, chunk_len, 2);
 			break;
 		case TYPE_UINT32:
-			m_phandle = prop->val.markers;
-			for_each_marker_of_type(m_phandle, REF_PHANDLE)
-				if (m->offset == m_phandle->offset)
-					break;
-
-			if (m_phandle) {
-				if (m_phandle->ref[0] == '/')
-					fprintf(f, "&{%s}", m_phandle->ref);
-				else
-					fprintf(f, "&%s", m_phandle->ref);
-				if (chunk_len > 4) {
-					fputc(' ', f);
-					write_propval_int(f, p + 4, chunk_len - 4, 4);
-				}
-			} else {
-				write_propval_int(f, p, chunk_len, 4);
-			}
-			if (data_len > chunk_len)
-				fputc(' ', f);
+			write_propval_int(f, p, chunk_len, 4);
 			break;
 		case TYPE_UINT64:
 			write_propval_int(f, p, chunk_len, 8);

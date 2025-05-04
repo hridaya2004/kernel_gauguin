@@ -134,7 +134,6 @@ SECTIONS
 			IDMAP_TEXT
 			HIBERNATE_TEXT
 			TRAMP_TEXT
-			*(.text..L.cfi.jumptable .text..L.cfi.jumptable.*)
 			*(.fixup)
 			*(.gnu.warning)
 		. = ALIGN(16);
@@ -162,9 +161,6 @@ SECTIONS
 		__alt_instructions = .;
 		*(.altinstructions)
 		__alt_instructions_end = .;
-	}
-	.altinstr_replacement : {
-		*(.altinstr_replacement)
 	}
 
 	. = ALIGN(PAGE_SIZE);

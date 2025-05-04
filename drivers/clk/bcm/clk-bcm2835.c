@@ -950,9 +950,9 @@ static u32 bcm2835_clock_choose_div(struct clk_hw *hw,
 	return div;
 }
 
-static unsigned long bcm2835_clock_rate_from_divisor(struct bcm2835_clock *clock,
-						     unsigned long parent_rate,
-						     u32 div)
+static long bcm2835_clock_rate_from_divisor(struct bcm2835_clock *clock,
+					    unsigned long parent_rate,
+					    u32 div)
 {
 	const struct bcm2835_clock_data *data = clock->data;
 	u64 temp;
@@ -1293,7 +1293,7 @@ static struct clk_hw *bcm2835_register_pll(struct bcm2835_cprman *cprman,
 					   const struct bcm2835_pll_data *data)
 {
 	struct bcm2835_pll *pll;
-	struct clk_init_data init = {};
+	struct clk_init_data init;
 	int ret;
 
 	memset(&init, 0, sizeof(init));
@@ -1326,7 +1326,7 @@ bcm2835_register_pll_divider(struct bcm2835_cprman *cprman,
 			     const struct bcm2835_pll_divider_data *data)
 {
 	struct bcm2835_pll_divider *divider;
-	struct clk_init_data init = {};
+	struct clk_init_data init;
 	const char *divider_name;
 	int ret;
 
@@ -1385,7 +1385,7 @@ static struct clk_hw *bcm2835_register_clock(struct bcm2835_cprman *cprman,
 					  const struct bcm2835_clock_data *data)
 {
 	struct bcm2835_clock *clock;
-	struct clk_init_data init = {};
+	struct clk_init_data init;
 	const char *parents[1 << CM_SRC_BITS];
 	size_t i;
 	int ret;
@@ -1737,7 +1737,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLC_LOADPER,
 		.hold_mask = CM_PLLC_HOLDPER,
 		.fixed_divider = 1,
-		.flags = CLK_IS_CRITICAL | CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT),
 
 	/*
 	 * PLLD is the display PLL, used to drive DSI display panels.

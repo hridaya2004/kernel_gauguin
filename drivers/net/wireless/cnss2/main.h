@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-/* Copyright (c) 2016-2021, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2016-2020, The Linux Foundation. All rights reserved. */
 
 #ifndef _CNSS_MAIN_H
 #define _CNSS_MAIN_H
@@ -11,10 +11,8 @@
 #include <linux/pm_qos.h>
 #include <net/cnss2.h>
 #include <soc/qcom/memory_dump.h>
-#if defined(CONFIG_MSM_SUBSYSTEM_RESTART) || defined(CONFIG_SUBSYSTEM_RAMDUMP)
-#include <soc/qcom/ramdump.h>
-#endif
 #ifdef CONFIG_MSM_SUBSYSTEM_RESTART
+#include <soc/qcom/ramdump.h>
 #include <soc/qcom/subsystem_notif.h>
 #include <soc/qcom/subsystem_restart.h>
 #endif
@@ -23,15 +21,17 @@
 
 #define MAX_NO_OF_MAC_ADDR		4
 #define QMI_WLFW_MAX_TIMESTAMP_LEN	32
+#define QMI_WLFW_MAX_NUM_MEM_SEG	32
 #define QMI_WLFW_MAX_BUILD_ID_LEN	128
 #define CNSS_RDDM_TIMEOUT_MS		20000
 #define RECOVERY_TIMEOUT		60000
 #define WLAN_WD_TIMEOUT_MS		60000
+#define WLAN_COLD_BOOT_CAL_TIMEOUT	60000
+#define WLAN_DRIVER_LOAD_TIMEOUT	90000
 #define TIME_CLOCK_FREQ_HZ		19200000
 #define CNSS_RAMDUMP_MAGIC		0x574C414E
 #define CNSS_RAMDUMP_VERSION		0
 #define MAX_FIRMWARE_NAME_LEN		20
-#define CNSS_INVALID_CAL_DURATION       0xFFFFFFFF
 
 #define CNSS_EVENT_SYNC   BIT(0)
 #define CNSS_EVENT_UNINTERRUPTIBLE BIT(1)
@@ -84,7 +84,6 @@ struct cnss_pinctrl_info {
 	struct pinctrl_state *wlan_en_active;
 	struct pinctrl_state *wlan_en_sleep;
 	int bt_en_gpio;
-	int sw_ctrl_gpio;
 };
 
 #ifdef CONFIG_MSM_SUBSYSTEM_RESTART
@@ -224,23 +223,24 @@ enum cnss_driver_event_type {
 };
 
 enum cnss_driver_state {
-	CNSS_QMI_WLFW_CONNECTED,
+	CNSS_QMI_WLFW_CONNECTED = 0,
 	CNSS_FW_MEM_READY,
 	CNSS_FW_READY,
-	CNSS_COLD_BOOT_CAL,
+	CNSS_IN_COLD_BOOT_CAL,
 	CNSS_DRIVER_LOADING,
-	CNSS_DRIVER_UNLOADING,
+	CNSS_DRIVER_UNLOADING = 5,
 	CNSS_DRIVER_IDLE_RESTART,
 	CNSS_DRIVER_IDLE_SHUTDOWN,
 	CNSS_DRIVER_PROBED,
 	CNSS_DRIVER_RECOVERY,
-	CNSS_FW_BOOT_RECOVERY,
+	CNSS_FW_BOOT_RECOVERY = 10,
 	CNSS_DEV_ERR_NOTIFY,
 	CNSS_DRIVER_DEBUG,
 	CNSS_COEX_CONNECTED,
 	CNSS_IMS_CONNECTED,
-	CNSS_IN_SUSPEND_RESUME,
+	CNSS_IN_SUSPEND_RESUME = 15,
 	CNSS_IN_REBOOT,
+        CNSS_COLD_BOOT_CAL_DONE,
 	CNSS_QMI_DEL_SERVER,
 };
 
@@ -292,6 +292,7 @@ enum cnss_bdf_type {
 enum cnss_cal_status {
 	CNSS_CAL_DONE,
 	CNSS_CAL_TIMEOUT,
+	CNSS_CAL_FAILURE,
 };
 
 struct cnss_cal_info {
@@ -332,16 +333,6 @@ enum cnss_ce_index {
 	CNSS_CE_COMMON,
 };
 
-enum cnss_timeout_type {
-	CNSS_TIMEOUT_QMI,
-	CNSS_TIMEOUT_POWER_UP,
-	CNSS_TIMEOUT_IDLE_RESTART,
-	CNSS_TIMEOUT_CALIBRATION,
-	CNSS_TIMEOUT_WLAN_WATCHDOG,
-	CNSS_TIMEOUT_RDDM,
-	CNSS_TIMEOUT_RECOVERY,
-};
-
 struct cnss_plat_data {
 	struct platform_device *plat_dev;
 	void *bus_priv;
@@ -375,14 +366,13 @@ struct cnss_plat_data {
 	struct wlfw_rf_board_info board_info;
 	struct wlfw_soc_info soc_info;
 	struct wlfw_fw_version_info fw_version_info;
-	struct cnss_dev_mem_info dev_mem_info[CNSS_MAX_DEV_MEM_NUM];
 	char fw_build_id[QMI_WLFW_MAX_BUILD_ID_LEN + 1];
 	u32 otp_version;
 	u32 fw_mem_seg_len;
-	struct cnss_fw_mem fw_mem[QMI_WLFW_MAX_NUM_MEM_SEG_V01];
+	struct cnss_fw_mem fw_mem[QMI_WLFW_MAX_NUM_MEM_SEG];
 	struct cnss_fw_mem m3_mem;
 	u32 qdss_mem_seg_len;
-	struct cnss_fw_mem qdss_mem[QMI_WLFW_MAX_NUM_MEM_SEG_V01];
+	struct cnss_fw_mem qdss_mem[QMI_WLFW_MAX_NUM_MEM_SEG];
 	u32 *qdss_reg;
 	struct cnss_pin_connect_result pin_result;
 	struct dentry *root_dentry;
@@ -398,7 +388,6 @@ struct cnss_plat_data {
 	u32 diag_reg_read_len;
 	u8 *diag_reg_read_buf;
 	u8 cal_done;
-	u32 cal_duration;
 	u8 powered_on;
 	u8 use_fw_path_with_prefix;
 	char firmware_name[MAX_FIRMWARE_NAME_LEN];
@@ -412,9 +401,12 @@ struct cnss_plat_data {
 	struct qmi_handle coex_qmi;
 	struct qmi_handle ims_qmi;
 	struct qmi_txn txn;
+	struct wakeup_source *recovery_ws;
 	u64 dynamic_feature;
 	void *get_info_cb_ctx;
 	int (*get_info_cb)(void *ctx, void *event, int event_len);
+	bool cbc_enabled;
+	u8 use_pm_domain;
 	u8 use_nv_mac;
 	u8 set_wlaon_pwr_ctrl;
 	u8 fw_pcie_gen_switch;
@@ -466,8 +458,6 @@ int cnss_register_subsys(struct cnss_plat_data *plat_priv);
 void cnss_unregister_subsys(struct cnss_plat_data *plat_priv);
 int cnss_register_ramdump(struct cnss_plat_data *plat_priv);
 void cnss_unregister_ramdump(struct cnss_plat_data *plat_priv);
-int cnss_do_ramdump(struct cnss_plat_data *plat_priv);
-int cnss_do_elf_ramdump(struct cnss_plat_data *plat_priv);
 void cnss_set_pin_connect_status(struct cnss_plat_data *plat_priv);
 int cnss_get_cpr_info(struct cnss_plat_data *plat_priv);
 int cnss_update_cpr_info(struct cnss_plat_data *plat_priv);
@@ -479,10 +469,5 @@ int cnss_minidump_add_region(struct cnss_plat_data *plat_priv,
 int cnss_minidump_remove_region(struct cnss_plat_data *plat_priv,
 				enum cnss_fw_dump_type type, int seg_no,
 				void *va, phys_addr_t pa, size_t size);
-unsigned int cnss_get_timeout(struct cnss_plat_data *plat_priv,
-			      enum cnss_timeout_type);
-int cnss_pci_update_qtime_sync_period(struct device *dev,
-				      unsigned int qtime_sync_period);
-int cnss_get_gpio_value(struct cnss_plat_data *plat_priv, int gpio_num);
 
 #endif /* _CNSS_MAIN_H */

@@ -70,9 +70,16 @@
 #include <scsi/scsi_tcq.h>
 #include <scsi/scsi_dbg.h>
 #include <scsi/scsi_eh.h>
-#include <linux/android_kabi.h>
 
 #include <linux/fault-inject.h>
+
+#if defined(CONFIG_ARCH_SONY_YOSHINO) || defined(CONFIG_ARCH_SONY_TAMA) || \
+    defined(CONFIG_ARCH_SONY_KUMANO)  || defined(CONFIG_ARCH_SONY_EDO) || \
+    defined(CONFIG_ARCH_SONY_LENA)
+ #ifndef UFS_TARGET_SONY_PLATFORM
+  #define UFS_TARGET_SONY_PLATFORM
+ #endif
+#endif
 
 #include "ufs.h"
 #include "ufshci.h"
@@ -382,11 +389,6 @@ struct ufs_hba_variant_ops {
 #endif
 	int	(*program_key)(struct ufs_hba *hba,
 			       const union ufs_crypto_cfg_entry *cfg, int slot);
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 /**
@@ -430,11 +432,6 @@ struct ufs_hba_crypto_variant_ops {
 				    struct scsi_cmnd *cmd,
 				    struct ufshcd_lrb *lrbp);
 	void *priv;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 /* clock gating state  */
@@ -480,7 +477,6 @@ struct ufs_clk_gating {
 	struct device_attribute delay_perf_attr;
 	struct device_attribute enable_attr;
 	bool is_enabled;
-	bool gate_wk_in_process;
 	int active_reqs;
 	struct workqueue_struct *clk_gating_workq;
 };
@@ -1123,11 +1119,6 @@ struct ufs_hba {
 	u32 crypto_cfg_register;
 	struct keyslot_manager *ksm;
 #endif /* CONFIG_SCSI_UFS_CRYPTO */
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 static inline void ufshcd_mark_shutdown_ongoing(struct ufs_hba *hba)

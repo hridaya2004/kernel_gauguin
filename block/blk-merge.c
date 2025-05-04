@@ -7,10 +7,8 @@
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/scatterlist.h>
-#ifndef __GENKSYMS__
 #include <linux/blkdev.h>
 #include <linux/blk-cgroup.h>
-#endif
 
 #include <trace/events/block.h>
 
@@ -673,6 +671,7 @@ static void blk_account_io_merge(struct request *req)
 		cpu = part_stat_lock();
 		part = req->part;
 
+		part_round_stats(req->q, cpu, part);
 		part_dec_in_flight(req->q, part, rq_data_dir(req));
 
 		hd_struct_put(part);

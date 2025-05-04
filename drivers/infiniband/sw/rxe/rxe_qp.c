@@ -210,17 +210,6 @@ static void rxe_qp_init_misc(struct rxe_dev *rxe, struct rxe_qp *qp,
 	spin_lock_init(&qp->grp_lock);
 	spin_lock_init(&qp->state_lock);
 
-	spin_lock_init(&qp->req.task.state_lock);
-	spin_lock_init(&qp->resp.task.state_lock);
-	spin_lock_init(&qp->comp.task.state_lock);
-
-	spin_lock_init(&qp->sq.sq_lock);
-	spin_lock_init(&qp->rq.producer_lock);
-	spin_lock_init(&qp->rq.consumer_lock);
-
-	skb_queue_head_init(&qp->req_pkts);
-	skb_queue_head_init(&qp->resp_pkts);
-
 	atomic_set(&qp->ssn, 0);
 	atomic_set(&qp->skb_out, 0);
 }
@@ -269,8 +258,13 @@ static int rxe_qp_init_req(struct rxe_dev *rxe, struct rxe_qp *qp,
 	qp->req.opcode		= -1;
 	qp->comp.opcode		= -1;
 
-	rxe_init_task(&qp->req.task, qp, rxe_requester);
-	rxe_init_task(&qp->comp.task, qp, rxe_completer);
+	spin_lock_init(&qp->sq.sq_lock);
+	skb_queue_head_init(&qp->req_pkts);
+
+	rxe_init_task(rxe, &qp->req.task, qp,
+		      rxe_requester, "req");
+	rxe_init_task(rxe, &qp->comp.task, qp,
+		      rxe_completer, "comp");
 
 	qp->qp_timeout_jiffies = 0; /* Can't be set for UD/UC in modify_qp */
 	if (init->qp_type == IB_QPT_RC) {
@@ -314,7 +308,13 @@ static int rxe_qp_init_resp(struct rxe_dev *rxe, struct rxe_qp *qp,
 		}
 	}
 
-	rxe_init_task(&qp->resp.task, qp, rxe_responder);
+	spin_lock_init(&qp->rq.producer_lock);
+	spin_lock_init(&qp->rq.consumer_lock);
+
+	skb_queue_head_init(&qp->resp_pkts);
+
+	rxe_init_task(rxe, &qp->resp.task, qp,
+		      rxe_responder, "resp");
 
 	qp->resp.opcode		= OPCODE_NONE;
 	qp->resp.msn		= 0;
@@ -795,9 +795,7 @@ void rxe_qp_destroy(struct rxe_qp *qp)
 	rxe_cleanup_task(&qp->comp.task);
 
 	/* flush out any receive wr's or pending requests */
-	if (qp->req.task.func)
-		__rxe_do_task(&qp->req.task);
-
+	__rxe_do_task(&qp->req.task);
 	if (qp->sq.queue) {
 		__rxe_do_task(&qp->comp.task);
 		__rxe_do_task(&qp->req.task);
@@ -832,15 +830,13 @@ static void rxe_qp_do_cleanup(struct work_struct *work)
 		qp->resp.mr = NULL;
 	}
 
+	if (qp_type(qp) == IB_QPT_RC)
+		sk_dst_reset(qp->sk->sk);
+
 	free_rd_atomic_resources(qp);
 
-	if (qp->sk) {
-		if (qp_type(qp) == IB_QPT_RC)
-			sk_dst_reset(qp->sk->sk);
-
-		kernel_sock_shutdown(qp->sk, SHUT_RDWR);
-		sock_release(qp->sk);
-	}
+	kernel_sock_shutdown(qp->sk, SHUT_RDWR);
+	sock_release(qp->sk);
 }
 
 /* called when the last reference to the qp is dropped */

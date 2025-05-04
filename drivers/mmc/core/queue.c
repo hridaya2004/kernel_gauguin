@@ -21,7 +21,6 @@
 #include "queue.h"
 #include "block.h"
 #include "core.h"
-#include "crypto.h"
 #include "card.h"
 #include "host.h"
 
@@ -136,13 +135,19 @@ static enum blk_eh_timer_return mmc_mq_timed_out(struct request *req,
 	struct request_queue *q = req->q;
 	struct mmc_queue *mq = q->queuedata;
 	unsigned long flags;
-	bool ignore_tout;
+	int ret;
 
 	spin_lock_irqsave(q->queue_lock, flags);
-	ignore_tout = mq->recovery_needed || !mq->use_cqe;
-	spin_unlock_irqrestore(q->queue_lock, flags);
 
-	return ignore_tout ? BLK_EH_RESET_TIMER : mmc_cqe_timed_out(req);
+	if (mq->recovery_needed || !mq->use_cqe) {
+		ret = BLK_EH_RESET_TIMER;
+		spin_unlock_irqrestore(q->queue_lock, flags);
+	} else {
+		spin_unlock_irqrestore(q->queue_lock, flags);
+		ret = mmc_cqe_timed_out(req);
+	}
+
+	return ret;
 }
 
 static void mmc_mq_recovery_handler(struct work_struct *work)
@@ -465,8 +470,6 @@ static int mmc_mq_init(struct mmc_queue *mq, struct mmc_card *card,
 	blk_queue_rq_timeout(mq->queue, 60 * HZ);
 
 	mmc_setup_queue(mq, card);
-
-	mmc_crypto_setup_queue(host, mq->queue);
 
 	return 0;
 }

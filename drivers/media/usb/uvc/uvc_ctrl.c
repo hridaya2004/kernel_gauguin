@@ -11,7 +11,6 @@
  *
  */
 
-#include <asm/barrier.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -997,55 +996,25 @@ static s32 __uvc_ctrl_get_value(struct uvc_control_mapping *mapping,
 	return value;
 }
 
-static int __uvc_ctrl_load_cur(struct uvc_video_chain *chain,
-			       struct uvc_control *ctrl)
-{
-	u8 *data;
-	int ret;
-
-	if (ctrl->loaded)
-		return 0;
-
-	data = uvc_ctrl_data(ctrl, UVC_CTRL_DATA_CURRENT);
-
-	if ((ctrl->info.flags & UVC_CTRL_FLAG_GET_CUR) == 0) {
-		memset(data, 0, ctrl->info.size);
-		ctrl->loaded = 1;
-
-		return 0;
-	}
-
-	if (ctrl->entity->get_cur)
-		ret = ctrl->entity->get_cur(chain->dev, ctrl->entity,
-					    ctrl->info.selector, data,
-					    ctrl->info.size);
-	else
-		ret = uvc_query_ctrl(chain->dev, UVC_GET_CUR,
-				     ctrl->entity->id, chain->dev->intfnum,
-				     ctrl->info.selector, data,
-				     ctrl->info.size);
-
-	if (ret < 0)
-		return ret;
-
-	ctrl->loaded = 1;
-
-	return ret;
-}
-
 static int __uvc_ctrl_get(struct uvc_video_chain *chain,
-			  struct uvc_control *ctrl,
-			  struct uvc_control_mapping *mapping,
-			  s32 *value)
+	struct uvc_control *ctrl, struct uvc_control_mapping *mapping,
+	s32 *value)
 {
 	int ret;
 
 	if ((ctrl->info.flags & UVC_CTRL_FLAG_GET_CUR) == 0)
 		return -EACCES;
 
-	ret = __uvc_ctrl_load_cur(chain, ctrl);
-	if (ret < 0)
-		return ret;
+	if (!ctrl->loaded) {
+		ret = uvc_query_ctrl(chain->dev, UVC_GET_CUR, ctrl->entity->id,
+				chain->dev->intfnum, ctrl->info.selector,
+				uvc_ctrl_data(ctrl, UVC_CTRL_DATA_CURRENT),
+				ctrl->info.size);
+		if (ret < 0)
+			return ret;
+
+		ctrl->loaded = 1;
+	}
 
 	*value = __uvc_ctrl_get_value(mapping,
 				uvc_ctrl_data(ctrl, UVC_CTRL_DATA_CURRENT));
@@ -1311,12 +1280,17 @@ static void uvc_ctrl_send_slave_event(struct uvc_video_chain *chain,
 	uvc_ctrl_send_event(chain, handle, ctrl, mapping, val, changes);
 }
 
-void uvc_ctrl_status_event(struct uvc_video_chain *chain,
-			   struct uvc_control *ctrl, const u8 *data)
+static void uvc_ctrl_status_event_work(struct work_struct *work)
 {
+	struct uvc_device *dev = container_of(work, struct uvc_device,
+					      async_ctrl.work);
+	struct uvc_ctrl_work *w = &dev->async_ctrl;
+	struct uvc_video_chain *chain = w->chain;
 	struct uvc_control_mapping *mapping;
+	struct uvc_control *ctrl = w->ctrl;
 	struct uvc_fh *handle;
 	unsigned int i;
+	int ret;
 
 	mutex_lock(&chain->ctrl_mutex);
 
@@ -1324,7 +1298,7 @@ void uvc_ctrl_status_event(struct uvc_video_chain *chain,
 	ctrl->handle = NULL;
 
 	list_for_each_entry(mapping, &ctrl->info.mappings, list) {
-		s32 value = __uvc_ctrl_get_value(mapping, data);
+		s32 value = __uvc_ctrl_get_value(mapping, w->data);
 
 		/*
 		 * handle may be NULL here if the device sends auto-update
@@ -1343,20 +1317,6 @@ void uvc_ctrl_status_event(struct uvc_video_chain *chain,
 	}
 
 	mutex_unlock(&chain->ctrl_mutex);
-}
-
-static void uvc_ctrl_status_event_work(struct work_struct *work)
-{
-	struct uvc_device *dev = container_of(work, struct uvc_device,
-					      async_ctrl.work);
-	struct uvc_ctrl_work *w = &dev->async_ctrl;
-	int ret;
-
-	uvc_ctrl_status_event(w->chain, w->ctrl, w->data);
-
-	/* The barrier is needed to synchronize with uvc_status_stop(). */
-	if (smp_load_acquire(&dev->flush_status))
-		return;
 
 	/* Resubmit the URB. */
 	w->urb->interval = dev->int_ep->desc.bInterval;
@@ -1366,8 +1326,8 @@ static void uvc_ctrl_status_event_work(struct work_struct *work)
 			   ret);
 }
 
-bool uvc_ctrl_status_event_async(struct urb *urb, struct uvc_video_chain *chain,
-				 struct uvc_control *ctrl, const u8 *data)
+bool uvc_ctrl_status_event(struct urb *urb, struct uvc_video_chain *chain,
+			   struct uvc_control *ctrl, const u8 *data)
 {
 	struct uvc_device *dev = chain->dev;
 	struct uvc_ctrl_work *w = &dev->async_ctrl;
@@ -1700,10 +1660,21 @@ int uvc_ctrl_set(struct uvc_fh *handle,
 	 * needs to be loaded from the device to perform the read-modify-write
 	 * operation.
 	 */
-	if ((ctrl->info.size * 8) != mapping->size) {
-		ret = __uvc_ctrl_load_cur(chain, ctrl);
-		if (ret < 0)
-			return ret;
+	if (!ctrl->loaded && (ctrl->info.size * 8) != mapping->size) {
+		if ((ctrl->info.flags & UVC_CTRL_FLAG_GET_CUR) == 0) {
+			memset(uvc_ctrl_data(ctrl, UVC_CTRL_DATA_CURRENT),
+				0, ctrl->info.size);
+		} else {
+			ret = uvc_query_ctrl(chain->dev, UVC_GET_CUR,
+				ctrl->entity->id, chain->dev->intfnum,
+				ctrl->info.selector,
+				uvc_ctrl_data(ctrl, UVC_CTRL_DATA_CURRENT),
+				ctrl->info.size);
+			if (ret < 0)
+				return ret;
+		}
+
+		ctrl->loaded = 1;
 	}
 
 	/* Backup the current value in case we need to rollback later. */
@@ -1742,19 +1713,9 @@ static int uvc_ctrl_get_flags(struct uvc_device *dev,
 	if (data == NULL)
 		return -ENOMEM;
 
-	if (ctrl->entity->get_info)
-		ret = ctrl->entity->get_info(dev, ctrl->entity,
-					     ctrl->info.selector, data);
-	else
-		ret = uvc_query_ctrl(dev, UVC_GET_INFO, ctrl->entity->id,
-				     dev->intfnum, info->selector, data, 1);
-
-	if (!ret) {
-		info->flags &= ~(UVC_CTRL_FLAG_GET_CUR |
-				 UVC_CTRL_FLAG_SET_CUR |
-				 UVC_CTRL_FLAG_AUTO_UPDATE |
-				 UVC_CTRL_FLAG_ASYNCHRONOUS);
-
+	ret = uvc_query_ctrl(dev, UVC_GET_INFO, ctrl->entity->id, dev->intfnum,
+			     info->selector, data, 1);
+	if (!ret)
 		info->flags |= (data[0] & UVC_CONTROL_CAP_GET ?
 				UVC_CTRL_FLAG_GET_CUR : 0)
 			    |  (data[0] & UVC_CONTROL_CAP_SET ?
@@ -1763,7 +1724,6 @@ static int uvc_ctrl_get_flags(struct uvc_device *dev,
 				UVC_CTRL_FLAG_AUTO_UPDATE : 0)
 			    |  (data[0] & UVC_CONTROL_CAP_ASYNCHRONOUS ?
 				UVC_CTRL_FLAG_ASYNCHRONOUS : 0);
-	}
 
 	kfree(data);
 	return ret;

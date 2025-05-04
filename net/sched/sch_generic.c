@@ -397,7 +397,7 @@ static inline bool qdisc_restart(struct Qdisc *q, int *packets)
 
 void __qdisc_run(struct Qdisc *q)
 {
-	int quota = READ_ONCE(dev_tx_weight);
+	int quota = dev_tx_weight;
 	int packets;
 
 	while (qdisc_restart(q, &packets)) {
@@ -970,6 +970,8 @@ static void qdisc_destroy(struct Qdisc *qdisc)
 	const struct Qdisc_ops *ops;
 	struct sk_buff *skb, *tmp;
 
+	if (!qdisc)
+		return;
 	ops = qdisc->ops;
 
 #ifdef CONFIG_NET_SCHED
@@ -1001,9 +1003,6 @@ static void qdisc_destroy(struct Qdisc *qdisc)
 
 void qdisc_put(struct Qdisc *qdisc)
 {
-	if (!qdisc)
-		return;
-
 	if (qdisc->flags & TCQ_F_BUILTIN ||
 	    !refcount_dec_and_test(&qdisc->refcnt))
 		return;
@@ -1283,6 +1282,15 @@ static int qdisc_change_tx_queue_len(struct net_device *dev,
 	if (ops->change_tx_queue_len)
 		return ops->change_tx_queue_len(qdisc, dev->tx_queue_len);
 	return 0;
+}
+
+void dev_qdisc_change_real_num_tx(struct net_device *dev,
+				  unsigned int new_real_tx)
+{
+	struct Qdisc *qdisc = dev->qdisc;
+
+	if (qdisc->ops->change_real_num_tx)
+		qdisc->ops->change_real_num_tx(qdisc, new_real_tx);
 }
 
 int dev_qdisc_change_tx_queue_len(struct net_device *dev)

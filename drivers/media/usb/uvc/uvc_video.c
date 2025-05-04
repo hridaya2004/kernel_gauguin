@@ -26,8 +26,6 @@
 
 #include "uvcvideo.h"
 
-#define CONFIG_DMA_NONCOHERENT 1
-
 /* ------------------------------------------------------------------------
  * UVC Controls
  */
@@ -214,13 +212,13 @@ static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
 		/* Compute a bandwidth estimation by multiplying the frame
 		 * size by the number of video frames per second, divide the
 		 * result by the number of USB frames (or micro-frames for
-		 * high- and super-speed devices) per second and add the UVC
-		 * header size (assumed to be 12 bytes long).
+		 * high-speed devices) per second and add the UVC header size
+		 * (assumed to be 12 bytes long).
 		 */
 		bandwidth = frame->wWidth * frame->wHeight / 8 * format->bpp;
 		bandwidth *= 10000000 / interval + 1;
 		bandwidth /= 1000;
-		if (stream->dev->udev->speed >= USB_SPEED_HIGH)
+		if (stream->dev->udev->speed == USB_SPEED_HIGH)
 			bandwidth /= 8;
 		bandwidth += 12;
 
@@ -475,7 +473,6 @@ uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 	ktime_t time;
 	u16 host_sof;
 	u16 dev_sof;
-	u32 dev_stc;
 
 	switch (data[1] & (UVC_STREAM_PTS | UVC_STREAM_SCR)) {
 	case UVC_STREAM_PTS | UVC_STREAM_SCR:
@@ -520,34 +517,6 @@ uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 	if (dev_sof == stream->clock.last_sof)
 		return;
 
-	dev_stc = get_unaligned_le32(&data[header_size - 6]);
-
-	/*
-	 * STC (Source Time Clock) is the clock used by the camera. The UVC 1.5
-	 * standard states that it "must be captured when the first video data
-	 * of a video frame is put on the USB bus". This is generally understood
-	 * as requiring devices to clear the payload header's SCR bit before
-	 * the first packet containing video data.
-	 *
-	 * Most vendors follow that interpretation, but some (namely SunplusIT
-	 * on some devices) always set the `UVC_STREAM_SCR` bit, fill the SCR
-	 * field with 0's,and expect that the driver only processes the SCR if
-	 * there is data in the packet.
-	 *
-	 * Ignore all the hardware timestamp information if we haven't received
-	 * any data for this frame yet, the packet contains no data, and both
-	 * STC and SOF are zero. This heuristics should be safe on compliant
-	 * devices. This should be safe with compliant devices, as in the very
-	 * unlikely case where a UVC 1.1 device would send timing information
-	 * only before the first packet containing data, and both STC and SOF
-	 * happen to be zero for a particular frame, we would only miss one
-	 * clock sample from many and the clock recovery algorithm wouldn't
-	 * suffer from this condition.
-	 */
-	if (buf && buf->bytesused == 0 && len == header_size &&
-	    dev_stc == 0 && dev_sof == 0)
-		return;
-
 	stream->clock.last_sof = dev_sof;
 
 	host_sof = usb_get_current_frame_number(stream->dev->udev);
@@ -585,7 +554,7 @@ uvc_video_clock_decode(struct uvc_streaming *stream, struct uvc_buffer *buf,
 	spin_lock_irqsave(&stream->clock.lock, flags);
 
 	sample = &stream->clock.samples[stream->clock.head];
-	sample->dev_stc = dev_stc;
+	sample->dev_stc = get_unaligned_le32(&data[header_size - 6]);
 	sample->dev_sof = dev_sof;
 	sample->host_sof = host_sof;
 	sample->host_time = time;
@@ -730,11 +699,11 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	unsigned long flags;
 	u64 timestamp;
 	u32 delta_stc;
-	u32 y1;
+	u32 y1, y2;
 	u32 x1, x2;
 	u32 mean;
 	u32 sof;
-	u64 y, y2;
+	u64 y;
 
 	if (!uvc_hw_timestamps_param)
 		return;
@@ -774,7 +743,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	sof = y;
 
 	uvc_trace(UVC_TRACE_CLOCK, "%s: PTS %u y %llu.%06llu SOF %u.%06llu "
-		  "(x1 %u x2 %u y1 %u y2 %llu SOF offset %u)\n",
+		  "(x1 %u x2 %u y1 %u y2 %u SOF offset %u)\n",
 		  stream->dev->name, buf->pts,
 		  y >> 16, div_u64((y & 0xffff) * 1000000, 65536),
 		  sof >> 16, div_u64(((u64)sof & 0xffff) * 1000000LLU, 65536),
@@ -789,7 +758,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 		goto done;
 
 	y1 = NSEC_PER_SEC;
-	y2 = ktime_to_ns(ktime_sub(last->host_time, first->host_time)) + y1;
+	y2 = (u32)ktime_to_ns(ktime_sub(last->host_time, first->host_time)) + y1;
 
 	/* Interpolated and host SOF timestamps can wrap around at slightly
 	 * different times. Handle this by adding or removing 2048 to or from
@@ -809,7 +778,7 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 	timestamp = ktime_to_ns(first->host_time) + y - y1;
 
 	uvc_trace(UVC_TRACE_CLOCK, "%s: SOF %u.%06llu y %llu ts %llu "
-		  "buf ts %llu (x1 %u/%u/%u x2 %u/%u/%u y1 %u y2 %llu)\n",
+		  "buf ts %llu (x1 %u/%u/%u x2 %u/%u/%u y1 %u y2 %u)\n",
 		  stream->dev->name,
 		  sof >> 16, div_u64(((u64)sof & 0xffff) * 1000000LLU, 65536),
 		  y, timestamp, vbuf->vb2_buf.timestamp,
@@ -833,9 +802,9 @@ static void uvc_video_stats_decode(struct uvc_streaming *stream,
 	unsigned int header_size;
 	bool has_pts = false;
 	bool has_scr = false;
-	u16 scr_sof;
-	u32 scr_stc;
-	u32 pts;
+	u16 uninitialized_var(scr_sof);
+	u32 uninitialized_var(scr_stc);
+	u32 uninitialized_var(pts);
 
 	if (stream->stats.stream.nb_frames == 0 &&
 	    stream->stats.frame.nb_packets == 0)
@@ -1309,9 +1278,7 @@ static void uvc_video_decode_meta(struct uvc_streaming *stream,
 	if (has_scr)
 		memcpy(stream->clock.last_scr, scr, 6);
 
-	meta->length = mem[0];
-	meta->flags  = mem[1];
-	memcpy(meta->buf, &mem[2], length - 2);
+	memcpy(&meta->length, mem, length);
 	meta_buf->bytesused += length + sizeof(meta->ns) + sizeof(meta->sof);
 
 	uvc_trace(UVC_TRACE_FRAME,
@@ -1578,7 +1545,7 @@ static void uvc_free_urb_buffers(struct uvc_streaming *stream)
 {
 	unsigned int i;
 
-	for (i = 0; i < stream->max_urb; ++i) {
+	for (i = 0; i < UVC_URBS; ++i) {
 		if (stream->urb_buffer[i]) {
 #ifndef CONFIG_DMA_NONCOHERENT
 			usb_free_coherent(stream->dev->udev, stream->urb_size,
@@ -1618,22 +1585,12 @@ static int uvc_alloc_urb_buffers(struct uvc_streaming *stream,
 	 * payloads across multiple URBs.
 	 */
 	npackets = DIV_ROUND_UP(size, psize);
-	if (npackets > stream->max_urb_packets)
-		npackets = stream->max_urb_packets;
-
-
-	/* Allocate memory for storing URB pointers */
-	stream->urb = kcalloc(stream->max_urb,
-			sizeof(struct urb *), gfp_flags | __GFP_NOWARN);
-	stream->urb_buffer = kcalloc(stream->max_urb,
-			sizeof(char *), gfp_flags | __GFP_NOWARN);
-	stream->urb_dma = kcalloc(stream->max_urb,
-			sizeof(dma_addr_t), gfp_flags | __GFP_NOWARN);
-
+	if (npackets > UVC_MAX_PACKETS)
+		npackets = UVC_MAX_PACKETS;
 
 	/* Retry allocations until one succeed. */
 	for (; npackets > 1; npackets /= 2) {
-		for (i = 0; i < stream->max_urb; ++i) {
+		for (i = 0; i < UVC_URBS; ++i) {
 			stream->urb_size = psize * npackets;
 #ifndef CONFIG_DMA_NONCOHERENT
 			stream->urb_buffer[i] = usb_alloc_coherent(
@@ -1649,10 +1606,10 @@ static int uvc_alloc_urb_buffers(struct uvc_streaming *stream,
 			}
 		}
 
-		if (i == stream->max_urb) {
-			uvc_trace(UVC_TRACE_VIDEO,
-				"Allocated %u URB buffers of %ux%u bytes each.\n",
-				stream->max_urb, npackets, psize);
+		if (i == UVC_URBS) {
+			uvc_trace(UVC_TRACE_VIDEO, "Allocated %u URB buffers "
+				"of %ux%u bytes each.\n", UVC_URBS, npackets,
+				psize);
 			return npackets;
 		}
 	}
@@ -1672,7 +1629,7 @@ static void uvc_uninit_video(struct uvc_streaming *stream, int free_buffers)
 
 	uvc_video_stats_stop(stream);
 
-	for (i = 0; i < stream->max_urb; ++i) {
+	for (i = 0; i < UVC_URBS; ++i) {
 		urb = stream->urb[i];
 		if (urb == NULL)
 			continue;
@@ -1684,8 +1641,6 @@ static void uvc_uninit_video(struct uvc_streaming *stream, int free_buffers)
 
 	if (free_buffers)
 		uvc_free_urb_buffers(stream);
-
-	stream->refcnt--;
 }
 
 /*
@@ -1735,7 +1690,7 @@ static int uvc_init_video_isoc(struct uvc_streaming *stream,
 
 	size = npackets * psize;
 
-	for (i = 0; i < stream->max_urb; ++i) {
+	for (i = 0; i < UVC_URBS; ++i) {
 		urb = usb_alloc_urb(npackets, gfp_flags);
 		if (urb == NULL) {
 			uvc_uninit_video(stream, 1);
@@ -1801,7 +1756,7 @@ static int uvc_init_video_bulk(struct uvc_streaming *stream,
 	if (stream->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
 		size = 0;
 
-	for (i = 0; i < stream->max_urb; ++i) {
+	for (i = 0; i < UVC_URBS; ++i) {
 		urb = usb_alloc_urb(0, gfp_flags);
 		if (urb == NULL) {
 			uvc_uninit_video(stream, 1);
@@ -1844,7 +1799,7 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		struct usb_host_endpoint *best_ep = NULL;
 		unsigned int best_psize = UINT_MAX;
 		unsigned int bandwidth;
-		unsigned int altsetting;
+		unsigned int uninitialized_var(altsetting);
 		int intfnum = stream->intfnum;
 
 		/* Isochronous endpoint, select the alternate setting. */
@@ -1910,8 +1865,7 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		return ret;
 
 	/* Submit the URBs. */
-	stream->refcnt++;
-	for (i = 0; i < stream->max_urb; ++i) {
+	for (i = 0; i < UVC_URBS; ++i) {
 		ret = usb_submit_urb(stream->urb[i], gfp_flags);
 		if (ret < 0) {
 			uvc_printk(KERN_ERR, "Failed to submit URB %u "
@@ -2071,9 +2025,6 @@ int uvc_video_init(struct uvc_streaming *stream)
 	stream->def_format = format;
 	stream->cur_format = format;
 	stream->cur_frame = frame;
-
-	stream->max_urb = UVC_URBS;
-	stream->max_urb_packets = UVC_MAX_PACKETS;
 
 	/* Select the video decoding function */
 	if (stream->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {

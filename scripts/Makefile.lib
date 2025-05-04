@@ -248,16 +248,13 @@ cmd_objcopy = $(OBJCOPY) $(OBJCOPYFLAGS) $(OBJCOPYFLAGS_$(@F)) $< $@
 # ---------------------------------------------------------------------------
 
 quiet_cmd_gzip = GZIP    $@
-cmd_gzip = (cat $(filter-out FORCE,$^) | gzip -n -f -9 > $@) || \
+cmd_gzip = (cat $(filter-out FORCE,$^) | gzip -n -f -1 > $@) || \
 	(rm -f $@ ; false)
 
 # DTC
 # ---------------------------------------------------------------------------
 DTC ?= $(objtree)/scripts/dtc/dtc
 DTC_FLAGS += -Wno-interrupt_provider
-
-# Silence warnings
-DTC_FLAGS += -q
 
 # Disable noisy checks by default
 ifeq ($(findstring 1,$(KBUILD_ENABLE_EXTRA_GCC_CHECKS)),)
@@ -320,11 +317,6 @@ $(obj)/%.dtb: $(src)/%.dts $(DTC) FORCE
 
 dtc-tmp = $(subst $(comma),_,$(dot-target).dts.tmp)
 
-# mkdtimg
-#----------------------------------------------------------------------------
-quiet_cmd_mkdtimg = DTBOIMG $@
-cmd_mkdtimg = $(PYTHON3) $(srctree)/scripts/mkdtboimg.py create $@ --page_size=4096 $(filter-out FORCE,$^)
-
 # cat
 # ---------------------------------------------------------------------------
 # Concatentate multiple files together
@@ -371,8 +363,7 @@ cmd_lzo = (cat $(filter-out FORCE,$^) | \
 
 quiet_cmd_lz4 = LZ4     $@
 cmd_lz4 = (cat $(filter-out FORCE,$^) | \
-	lz4 -l -12 --favor-decSpeed stdin stdout && \
-	$(call size_append, $(filter-out FORCE,$^))) > $@ || \
+	lz4c -l -c1 stdin stdout && $(call size_append, $(filter-out FORCE,$^))) > $@ || \
 	(rm -f $@ ; false)
 
 # U-Boot mkimage

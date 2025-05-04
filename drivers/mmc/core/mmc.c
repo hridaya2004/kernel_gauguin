@@ -1055,12 +1055,10 @@ static int mmc_select_bus_width(struct mmc_card *card)
 	static const unsigned int ext_csd_bits[] = {
 		EXT_CSD_BUS_WIDTH_8,
 		EXT_CSD_BUS_WIDTH_4,
-		EXT_CSD_BUS_WIDTH_1,
 	};
 	static const unsigned int bus_widths[] = {
 		MMC_BUS_WIDTH_8,
 		MMC_BUS_WIDTH_4,
-		MMC_BUS_WIDTH_1,
 	};
 	struct mmc_host *host = card->host;
 	unsigned int idx, bus_width = 0;
@@ -2972,7 +2970,7 @@ static const struct mmc_bus_ops mmc_ops = {
 	.alive = mmc_alive,
 	.shutdown = mmc_shutdown,
 	.hw_reset = _mmc_hw_reset,
-	.cache_enabled = _mmc_cache_enabled,
+        .cache_enabled = _mmc_cache_enabled,
 	.change_bus_speed = mmc_change_bus_speed,
 	.change_bus_speed_deferred = mmc_change_bus_speed_deferred,
 };

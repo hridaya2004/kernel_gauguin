@@ -15,9 +15,7 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/seq_file.h>
-#ifndef __GENKSYMS__
 #include <linux/mm.h>
-#endif
 
 #include "sysfs.h"
 #include "../kernfs/kernfs-internal.h"
@@ -431,8 +429,6 @@ struct kernfs_node *sysfs_break_active_protection(struct kobject *kobj,
 	kn = kernfs_find_and_get(kobj->sd, attr->name);
 	if (kn)
 		kernfs_break_active_protection(kn);
-	else
-		kobject_put(kobj);
 	return kn;
 }
 EXPORT_SYMBOL_GPL(sysfs_break_active_protection);
@@ -603,7 +599,7 @@ int sysfs_emit_at(char *buf, int at, const char *fmt, ...)
 	va_list args;
 	int len;
 
-	if (WARN(!buf || at < 0 || at >= PAGE_SIZE,
+	if (WARN(!buf || offset_in_page(buf) || at < 0 || at >= PAGE_SIZE,
 		 "invalid sysfs_emit_at: buf:%p at:%d\n", buf, at))
 		return 0;
 

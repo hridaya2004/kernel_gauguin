@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/jiffies.h>
@@ -198,7 +198,7 @@ struct msm_cvp_inst *cvp_get_inst_validate(struct msm_cvp_core *core,
 	s = cvp_get_inst(core, session_id);
 	if (!s) {
 		dprintk(CVP_ERR, "%s session doesn't exit\n",
-			__builtin_return_address(0));
+			(char *)__builtin_return_address(0));
 		return NULL;
 	}
 
@@ -1749,8 +1749,7 @@ int cvp_comm_set_arp_buffers(struct msm_cvp_inst *inst)
 	return rc;
 
 error:
-	if (rc != -ENOMEM)
-		cvp_comm_release_persist_buffers(inst);
+	cvp_comm_release_persist_buffers(inst);
 	return rc;
 }
 
@@ -1826,13 +1825,14 @@ int cvp_comm_release_persist_buffers(struct msm_cvp_inst *inst)
 			dprintk(CVP_DBG,
 			"%s: %x : fd %d %s size %d",
 			"free arp", hash32_ptr(inst->session), buf->smem.fd,
-			buf->smem.dma_buf->name, buf->smem.size);
+			buf->smem.dma_buf->buf_name, buf->smem.size);
 			msm_cvp_smem_free(handle);
 		} else if (buf->buffer_ownership == CLIENT) {
 			dprintk(CVP_DBG,
 			"%s: %x : fd %d %s size %d",
 			"unmap persist", hash32_ptr(inst->session),
-			buf->smem.fd, buf->smem.dma_buf->name, buf->smem.size);
+			buf->smem.fd, buf->smem.dma_buf->buf_name,
+			buf->smem.size);
 			msm_cvp_smem_unmap_dma_buf(inst, &buf->smem);
 		}
 

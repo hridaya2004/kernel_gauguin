@@ -1889,14 +1889,6 @@ pnfs_update_layout(struct inode *ino,
 	}
 
 lookup_again:
-	if (!nfs4_valid_open_stateid(ctx->state)) {
-		trace_pnfs_update_layout(ino, pos, count,
-					 iomode, lo, lseg,
-					 PNFS_UPDATE_LAYOUT_INVALID_OPEN);
-		lseg = ERR_PTR(-EIO);
-		goto out;
-	}
-
 	lseg = ERR_PTR(nfs4_client_recover_expired_lease(clp));
 	if (IS_ERR(lseg))
 		goto out;
@@ -2053,12 +2045,6 @@ lookup_again:
 		case -ERECALLCONFLICT:
 		case -EAGAIN:
 			break;
-		case -ENODATA:
-			/* The server returned NFS4ERR_LAYOUTUNAVAILABLE */
-			pnfs_layout_set_fail_bit(
-				lo, pnfs_iomode_to_fail_bit(iomode));
-			lseg = NULL;
-			goto out_put_layout_hdr;
 		default:
 			if (!nfs_error_is_fatal(PTR_ERR(lseg))) {
 				pnfs_layout_clear_fail_bit(lo, pnfs_iomode_to_fail_bit(iomode));

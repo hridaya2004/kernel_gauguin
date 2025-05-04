@@ -46,10 +46,12 @@ static struct integrity_iint_cache *__integrity_iint_find(struct inode *inode)
 		else if (inode > iint->inode)
 			n = n->rb_right;
 		else
-			return iint;
+			break;
 	}
+	if (!n)
+		return NULL;
 
-	return NULL;
+	return iint;
 }
 
 /*
@@ -69,32 +71,9 @@ struct integrity_iint_cache *integrity_iint_find(struct inode *inode)
 	return iint;
 }
 
-#define IMA_MAX_NESTING (FILESYSTEM_MAX_STACK_DEPTH+1)
-
-/*
- * It is not clear that IMA should be nested at all, but as long is it measures
- * files both on overlayfs and on underlying fs, we need to annotate the iint
- * mutex to avoid lockdep false positives related to IMA + overlayfs.
- * See ovl_lockdep_annotate_inode_mutex_key() for more details.
- */
-static inline void iint_lockdep_annotate(struct integrity_iint_cache *iint,
-					 struct inode *inode)
+static void iint_free(struct integrity_iint_cache *iint)
 {
-#ifdef CONFIG_LOCKDEP
-	static struct lock_class_key iint_mutex_key[IMA_MAX_NESTING];
-
-	int depth = inode->i_sb->s_stack_depth;
-
-	if (WARN_ON_ONCE(depth < 0 || depth >= IMA_MAX_NESTING))
-		depth = 0;
-
-	lockdep_set_class(&iint->mutex, &iint_mutex_key[depth]);
-#endif
-}
-
-static void iint_init_always(struct integrity_iint_cache *iint,
-			     struct inode *inode)
-{
+	kfree(iint->ima_hash);
 	iint->ima_hash = NULL;
 	iint->version = 0;
 	iint->flags = 0UL;
@@ -106,14 +85,6 @@ static void iint_init_always(struct integrity_iint_cache *iint,
 	iint->ima_creds_status = INTEGRITY_UNKNOWN;
 	iint->evm_status = INTEGRITY_UNKNOWN;
 	iint->measured_pcrs = 0;
-	mutex_init(&iint->mutex);
-	iint_lockdep_annotate(iint, inode);
-}
-
-static void iint_free(struct integrity_iint_cache *iint)
-{
-	kfree(iint->ima_hash);
-	mutex_destroy(&iint->mutex);
 	kmem_cache_free(iint_cache, iint);
 }
 
@@ -138,8 +109,6 @@ struct integrity_iint_cache *integrity_inode_get(struct inode *inode)
 	if (!iint)
 		return NULL;
 
-	iint_init_always(iint, inode);
-
 	write_lock(&integrity_iint_lock);
 
 	p = &integrity_iint_tree.rb_node;
@@ -147,15 +116,10 @@ struct integrity_iint_cache *integrity_inode_get(struct inode *inode)
 		parent = *p;
 		test_iint = rb_entry(parent, struct integrity_iint_cache,
 				     rb_node);
-		if (inode < test_iint->inode) {
+		if (inode < test_iint->inode)
 			p = &(*p)->rb_left;
-		} else if (inode > test_iint->inode) {
+		else
 			p = &(*p)->rb_right;
-		} else {
-			write_unlock(&integrity_iint_lock);
-			kmem_cache_free(iint_cache, iint);
-			return test_iint;
-		}
 	}
 
 	iint->inode = inode;
@@ -189,18 +153,25 @@ void integrity_inode_free(struct inode *inode)
 	iint_free(iint);
 }
 
-static void iint_init_once(void *foo)
+static void init_once(void *foo)
 {
 	struct integrity_iint_cache *iint = foo;
 
 	memset(iint, 0, sizeof(*iint));
+	iint->ima_file_status = INTEGRITY_UNKNOWN;
+	iint->ima_mmap_status = INTEGRITY_UNKNOWN;
+	iint->ima_bprm_status = INTEGRITY_UNKNOWN;
+	iint->ima_read_status = INTEGRITY_UNKNOWN;
+	iint->ima_creds_status = INTEGRITY_UNKNOWN;
+	iint->evm_status = INTEGRITY_UNKNOWN;
+	mutex_init(&iint->mutex);
 }
 
 static int __init integrity_iintcache_init(void)
 {
 	iint_cache =
 	    kmem_cache_create("iint_cache", sizeof(struct integrity_iint_cache),
-			      0, SLAB_PANIC, iint_init_once);
+			      0, SLAB_PANIC, init_once);
 	return 0;
 }
 security_initcall(integrity_iintcache_init);

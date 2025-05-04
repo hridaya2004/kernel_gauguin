@@ -462,14 +462,12 @@ char *log_buf_addr_get(void)
 {
 	return log_buf;
 }
-EXPORT_SYMBOL_GPL(log_buf_addr_get);
 
 /* Return log buffer size */
 u32 log_buf_len_get(void)
 {
 	return log_buf_len;
 }
-EXPORT_SYMBOL_GPL(log_buf_len_get);
 
 /* human readable text of the record */
 static char *log_text(const struct printk_log *msg)
@@ -1733,12 +1731,6 @@ static int console_trylock_spinning(void)
 	 * complain.
 	 */
 	mutex_acquire(&console_lock_dep_map, 0, 1, _THIS_IP_);
-
-	/*
-	 * Update @console_may_schedule for trylock because the previous
-	 * owner may have been schedulable.
-	 */
-	console_may_schedule = 0;
 
 	return 1;
 }

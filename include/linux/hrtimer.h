@@ -22,7 +22,6 @@
 #include <linux/percpu.h>
 #include <linux/timer.h>
 #include <linux/timerqueue.h>
-#include <linux/android_kabi.h>
 
 struct hrtimer_clock_base;
 struct hrtimer_cpu_base;
@@ -119,8 +118,6 @@ struct hrtimer {
 	u8				state;
 	u8				is_rel;
 	u8				is_soft;
-
-	ANDROID_KABI_RESERVE(1);
 };
 
 /**
@@ -188,7 +185,6 @@ enum  hrtimer_base_type {
  * @hang_detected:	The last hrtimer interrupt detected a hang
  * @softirq_activated:	displays, if the softirq is raised - update of softirq
  *			related settings is not required then.
- * @online:		CPU is online from an hrtimers point of view
  * @nr_events:		Total number of hrtimer interrupt events
  * @nr_retries:		Total number of hrtimer interrupt retries
  * @nr_hangs:		Total number of hrtimer interrupt hangs
@@ -213,8 +209,7 @@ struct hrtimer_cpu_base {
 	unsigned int			hres_active		: 1,
 					in_hrtirq		: 1,
 					hang_detected		: 1,
-					softirq_activated       : 1,
-					online			: 1;
+					softirq_activated       : 1;
 #ifdef CONFIG_HIGH_RES_TIMERS
 	unsigned int			nr_events;
 	unsigned short			nr_retries;

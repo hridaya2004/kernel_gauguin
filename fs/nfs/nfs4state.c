@@ -66,8 +66,6 @@
 
 #define OPENOWNER_POOL_SIZE	8
 
-static void nfs4_state_start_reclaim_reboot(struct nfs_client *clp);
-
 const nfs4_stateid zero_stateid = {
 	{ .data = { 0 } },
 	.type = NFS4_SPECIAL_STATEID_TYPE,
@@ -340,8 +338,6 @@ do_confirm:
 	status = nfs4_proc_create_session(clp, cred);
 	if (status != 0)
 		goto out;
-	if (!(clp->cl_exchange_flags & EXCHGID4_FLAG_CONFIRMED_R))
-		nfs4_state_start_reclaim_reboot(clp);
 	nfs41_finish_session_reset(clp);
 	nfs_mark_client_ready(clp, NFS_CS_READY);
 out:
@@ -679,7 +675,7 @@ nfs4_alloc_open_state(void)
 	state = kzalloc(sizeof(*state), GFP_NOFS);
 	if (!state)
 		return NULL;
-	refcount_set(&state->count, 1);
+	atomic_set(&state->count, 1);
 	INIT_LIST_HEAD(&state->lock_states);
 	spin_lock_init(&state->state_lock);
 	seqlock_init(&state->seqlock);
@@ -713,7 +709,7 @@ __nfs4_find_state_byowner(struct inode *inode, struct nfs4_state_owner *owner)
 			continue;
 		if (!nfs4_valid_open_stateid(state))
 			continue;
-		if (refcount_inc_not_zero(&state->count))
+		if (atomic_inc_not_zero(&state->count))
 			return state;
 	}
 	return NULL;
@@ -767,7 +763,7 @@ void nfs4_put_open_state(struct nfs4_state *state)
 	struct inode *inode = state->inode;
 	struct nfs4_state_owner *owner = state->owner;
 
-	if (!refcount_dec_and_lock(&state->count, &owner->so_lock))
+	if (!atomic_dec_and_lock(&state->count, &owner->so_lock))
 		return;
 	spin_lock(&inode->i_lock);
 	list_del(&state->inode_states);
@@ -1251,8 +1247,6 @@ void nfs4_schedule_state_manager(struct nfs_client *clp)
 	if (IS_ERR(task)) {
 		printk(KERN_ERR "%s: kthread_run: %ld\n",
 			__func__, PTR_ERR(task));
-		if (!nfs_client_init_is_complete(clp))
-			nfs_mark_client_ready(clp, PTR_ERR(task));
 		nfs4_clear_state_manager_bit(clp);
 		nfs_put_client(clp);
 		module_put(THIS_MODULE);
@@ -1600,7 +1594,7 @@ restart:
 			continue;
 		if (state->state == 0)
 			continue;
-		refcount_inc(&state->count);
+		atomic_inc(&state->count);
 		spin_unlock(&sp->so_lock);
 		status = ops->recover_open(sp, state);
 		if (status >= 0) {
@@ -1742,7 +1736,6 @@ static void nfs4_state_mark_reclaim_helper(struct nfs_client *clp,
 
 static void nfs4_state_start_reclaim_reboot(struct nfs_client *clp)
 {
-	set_bit(NFS4CLNT_RECLAIM_REBOOT, &clp->cl_state);
 	/* Mark all delegations for reclaim */
 	nfs_delegation_mark_reclaim(clp);
 	nfs4_state_mark_reclaim_helper(clp, nfs4_state_mark_reclaim_reboot);
@@ -1892,7 +1885,6 @@ restart:
 				set_bit(ops->owner_flag_bit, &sp->so_flags);
 				nfs4_put_state_owner(sp);
 				status = nfs4_recovery_handle_error(clp, status);
-				nfs4_free_state_owners(&freeme);
 				return (status != 0) ? status : -EAGAIN;
 			}
 
@@ -2597,7 +2589,6 @@ static void nfs4_state_manager(struct nfs_client *clp)
 			if (status < 0)
 				goto out_error;
 			nfs4_state_end_reclaim_reboot(clp);
-			continue;
 		}
 
 		/* Detect expired delegations... */

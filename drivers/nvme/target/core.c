@@ -504,7 +504,6 @@ static void __nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
 	u32 old_sqhd, new_sqhd;
 	u16 sqhd;
-	struct nvmet_ns *ns = req->ns;
 
 	if (status)
 		nvmet_set_status(req, status);
@@ -521,17 +520,15 @@ static void __nvmet_req_complete(struct nvmet_req *req, u16 status)
 	req->rsp->sq_id = cpu_to_le16(req->sq->qid);
 	req->rsp->command_id = req->cmd->common.command_id;
 
+	if (req->ns)
+		nvmet_put_namespace(req->ns);
 	req->ops->queue_response(req);
-	if (ns)
-		nvmet_put_namespace(ns);
 }
 
 void nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
-	struct nvmet_sq *sq = req->sq;
-
 	__nvmet_req_complete(req, status);
-	percpu_ref_put(&sq->ref);
+	percpu_ref_put(&req->sq->ref);
 }
 EXPORT_SYMBOL_GPL(nvmet_req_complete);
 

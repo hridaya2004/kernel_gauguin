@@ -3,7 +3,6 @@
  *
  * Copyright (C) 2010 Marco Stornelli <marco.stornelli@gmail.com>
  * Copyright (C) 2011 Kees Cook <keescook@chromium.org>
- * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -36,7 +35,6 @@
 #include <linux/pstore_ram.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/memblock.h>
 
 #define RAMOOPS_KERNMSG_HDR "===="
 #define MIN_MEM_SIZE 4096UL
@@ -592,7 +590,6 @@ static int ramoops_init_przs(const char *name,
 	}
 
 	zone_sz = mem_sz / *cnt;
-	zone_sz = ALIGN_DOWN(zone_sz, 2);
 	if (!zone_sz) {
 		dev_err(dev, "%s zone size == 0\n", name);
 		goto fail;
@@ -756,7 +753,6 @@ static int ramoops_probe(struct platform_device *pdev)
 	/* Make sure we didn't get bogus platform data pointer. */
 	if (!pdata) {
 		pr_err("NULL platform data\n");
-		err = -EINVAL;
 		goto fail_out;
 	}
 
@@ -764,7 +760,6 @@ static int ramoops_probe(struct platform_device *pdev)
 			!pdata->ftrace_size && !pdata->pmsg_size)) {
 		pr_err("The memory size and the record/console size must be "
 			"non-zero\n");
-		err = -EINVAL;
 		goto fail_out;
 	}
 
@@ -971,49 +966,6 @@ static void __init ramoops_register_dummy(void)
 		ramoops_unregister_dummy();
 	}
 }
-
-struct ramoops_platform_data ramoops_data;
-
-static struct platform_device ramoops_dev  = {
-	.name = "ramoops",
-	.dev = {
-		.platform_data = &ramoops_data,
-	},
-};
-
-static int __init ramoops_memreserve(char *p)
-{
-	unsigned long size;
-
-	if (!p)
-		return 1;
-
-	size = memparse(p, &p) & PAGE_MASK;
-	ramoops_data.mem_size = size;
-	ramoops_data.mem_address = 0xB0000000;
-	ramoops_data.console_size = size / 2;
-	ramoops_data.pmsg_size = size / 2;
-	ramoops_data.dump_oops = 1;
-
-	pr_info("msm_reserve_ramoops_memory addr=%llx,size=%lx\n",
-		ramoops_data.mem_address, ramoops_data.mem_size);
-	pr_info("msm_reserve_ramoops_memory record_size=%lx,ftrace_size=%lx\n",
-		ramoops_data.record_size, ramoops_data.ftrace_size);
-
-	memblock_reserve(ramoops_data.mem_address, ramoops_data.mem_size);
-
-	return 0;
-}
-early_param("ramoops_memreserve", ramoops_memreserve);
-
-static int __init msm_register_ramoops_device(void)
-{
-	pr_info("msm_register_ramoops_device\n");
-	if (platform_device_register(&ramoops_dev))
-		pr_info("Unable to register ramoops platform device\n");
-	return 0;
-}
-core_initcall(msm_register_ramoops_device);
 
 static int __init ramoops_init(void)
 {

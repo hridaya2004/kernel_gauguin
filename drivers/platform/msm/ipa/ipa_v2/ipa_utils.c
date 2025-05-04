@@ -5005,6 +5005,11 @@ static bool ipa2_pm_is_used(void)
 	return false;
 }
 
+static bool ipa2_get_lan_rx_napi(void)
+{
+	return false;
+}
+
 int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	struct ipa_api_controller *api_ctrl)
 {
@@ -5096,6 +5101,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_uc_dereg_rdyCB = ipa2_uc_dereg_rdyCB;
 	api_ctrl->ipa_create_wdi_mapping = ipa2_create_wdi_mapping;
 	api_ctrl->ipa_release_wdi_mapping = ipa2_release_wdi_mapping;
+	api_ctrl->ipa_get_smmu_params = ipa2_get_smmu_params;
 	api_ctrl->teth_bridge_init = ipa2_teth_bridge_init;
 	api_ctrl->teth_bridge_disconnect = ipa2_teth_bridge_disconnect;
 	api_ctrl->teth_bridge_connect = ipa2_teth_bridge_connect;
@@ -5182,6 +5188,7 @@ int ipa2_bind_api_controller(enum ipa_hw_type ipa_hw_type,
 	api_ctrl->ipa_enable_wdi_pipes = ipa2_enable_wdi3_pipes;
 	api_ctrl->ipa_disable_wdi_pipes = ipa2_disable_wdi3_pipes;
 	api_ctrl->ipa_pm_is_used = ipa2_pm_is_used;
+	api_ctrl->ipa_get_lan_rx_napi = ipa2_get_lan_rx_napi;
 
 	return 0;
 }

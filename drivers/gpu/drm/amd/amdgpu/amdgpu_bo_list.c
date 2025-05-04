@@ -168,7 +168,6 @@ int amdgpu_bo_list_get(struct amdgpu_fpriv *fpriv, int id,
 	}
 
 	rcu_read_unlock();
-	*result = NULL;
 	return -ENOENT;
 }
 

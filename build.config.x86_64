@@ -1,8 +1,7 @@
 ARCH=x86_64
 
-LLVM_IAS=1
-CROSS_COMPILE=x86_64-linux-gnu-
-LINUX_GCC_CROSS_COMPILE_PREBUILTS_BIN=prebuilts/gas/linux-x86
+CROSS_COMPILE=aarch64-linux-gnu-
+LINUX_GCC_CROSS_COMPILE_PREBUILTS_BIN=prebuilts/gcc/linux-x86/x86/x86_64-linux-android-4.9/bin
 
 FILES="
 arch/x86/boot/bzImage

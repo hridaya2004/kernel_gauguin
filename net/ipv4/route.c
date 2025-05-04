@@ -140,8 +140,7 @@ static int ip_rt_gc_timeout __read_mostly	= RT_GC_TIMEOUT;
 static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie);
 static unsigned int	 ipv4_default_advmss(const struct dst_entry *dst);
 static unsigned int	 ipv4_mtu(const struct dst_entry *dst);
-static void		ipv4_negative_advice(struct sock *sk,
-					     struct dst_entry *dst);
+static struct dst_entry *ipv4_negative_advice(struct dst_entry *dst);
 static void		 ipv4_link_failure(struct sk_buff *skb);
 static void		 ip_rt_update_pmtu(struct dst_entry *dst, struct sock *sk,
 					   struct sk_buff *skb, u32 mtu,
@@ -792,7 +791,7 @@ static void __ip_do_redirect(struct rtable *rt, struct sk_buff *skb, struct flow
 			goto reject_redirect;
 	}
 
-	n = __ipv4_neigh_lookup(rt->dst.dev, (__force u32)new_gw);
+	n = __ipv4_neigh_lookup(rt->dst.dev, new_gw);
 	if (!n)
 		n = neigh_create(&arp_tbl, &new_gw, rt->dst.dev);
 	if (!IS_ERR(n)) {
@@ -849,15 +848,22 @@ static void ip_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_buf
 	__ip_do_redirect(rt, skb, &fl4, true);
 }
 
-static void ipv4_negative_advice(struct sock *sk,
-				 struct dst_entry *dst)
+static struct dst_entry *ipv4_negative_advice(struct dst_entry *dst)
 {
 	struct rtable *rt = (struct rtable *)dst;
+	struct dst_entry *ret = dst;
 
-	if ((dst->obsolete > 0) ||
-	    (rt->rt_flags & RTCF_REDIRECTED) ||
-	    rt->dst.expires)
-		sk_dst_reset(sk);
+	if (rt) {
+		if (dst->obsolete > 0) {
+			ip_rt_put(rt);
+			ret = NULL;
+		} else if ((rt->rt_flags & RTCF_REDIRECTED) ||
+			   rt->dst.expires) {
+			ip_rt_put(rt);
+			ret = NULL;
+		}
+	}
+	return ret;
 }
 
 /*
@@ -931,11 +937,13 @@ void ip_rt_send_redirect(struct sk_buff *skb)
 		icmp_send(skb, ICMP_REDIRECT, ICMP_REDIR_HOST, gw);
 		peer->rate_last = jiffies;
 		++peer->n_redirects;
-		if (IS_ENABLED(CONFIG_IP_ROUTE_VERBOSE) && log_martians &&
+#ifdef CONFIG_IP_ROUTE_VERBOSE
+		if (log_martians &&
 		    peer->n_redirects == ip_rt_redirect_number)
 			net_warn_ratelimited("host %pI4/if%d ignores redirects for %pI4 to %pI4\n",
 					     &ip_hdr(skb)->saddr, inet_iif(skb),
 					     &ip_hdr(skb)->daddr, &gw);
+#endif
 	}
 out_put_peer:
 	inet_putpeer(peer);
@@ -1207,7 +1215,6 @@ static struct dst_entry *ipv4_dst_check(struct dst_entry *dst, u32 cookie)
 
 static void ipv4_send_dest_unreach(struct sk_buff *skb)
 {
-	struct net_device *dev;
 	struct ip_options opt;
 	int res;
 
@@ -1225,8 +1232,7 @@ static void ipv4_send_dest_unreach(struct sk_buff *skb)
 		opt.optlen = ip_hdr(skb)->ihl * 4 - sizeof(struct iphdr);
 
 		rcu_read_lock();
-		dev = skb->dev ? skb->dev : skb_rtable(skb)->dst.dev;
-		res = __ip_options_compile(dev_net(dev), &opt, skb, NULL);
+		res = __ip_options_compile(dev_net(skb->dev), &opt, skb, NULL);
 		rcu_read_unlock();
 
 		if (res)
@@ -1273,15 +1279,18 @@ void ip_rt_get_source(u8 *addr, struct sk_buff *skb, struct rtable *rt)
 		src = ip_hdr(skb)->saddr;
 	else {
 		struct fib_result res;
-		struct iphdr *iph = ip_hdr(skb);
-		struct flowi4 fl4 = {
-			.daddr = iph->daddr,
-			.saddr = iph->saddr,
-			.flowi4_tos = iph->tos & IPTOS_RT_MASK,
-			.flowi4_oif = rt->dst.dev->ifindex,
-			.flowi4_iif = skb->dev->ifindex,
-			.flowi4_mark = skb->mark,
-		};
+		struct flowi4 fl4;
+		struct iphdr *iph;
+
+		iph = ip_hdr(skb);
+
+		memset(&fl4, 0, sizeof(fl4));
+		fl4.daddr = iph->daddr;
+		fl4.saddr = iph->saddr;
+		fl4.flowi4_tos = RT_TOS(iph->tos);
+		fl4.flowi4_oif = rt->dst.dev->ifindex;
+		fl4.flowi4_iif = skb->dev->ifindex;
+		fl4.flowi4_mark = skb->mark;
 
 		rcu_read_lock();
 		if (fib_lookup(dev_net(rt->dst.dev), &fl4, &res, 0) == 0)
@@ -1410,7 +1419,7 @@ u32 ip_mtu_from_fib_result(struct fib_result *res, __be32 daddr)
 	struct net_device *dev = nh->nh_dev;
 	u32 mtu = 0;
 
-	if (READ_ONCE(dev_net(dev)->ipv4.sysctl_ip_fwd_use_pmtu) ||
+	if (dev_net(dev)->ipv4.sysctl_ip_fwd_use_pmtu ||
 	    fi->fib_metrics->metrics[RTAX_LOCK - 1] & (1 << RTAX_MTU))
 		mtu = fi->fib_mtu;
 

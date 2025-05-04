@@ -69,8 +69,8 @@ static int ipa3_setup_wdi3_gsi_channel(u8 is_smmu_enabled,
 {
 	struct gsi_evt_ring_props gsi_evt_ring_props;
 	struct gsi_chan_props gsi_channel_props;
-	union gsi_channel_scratch ch_scratch;
-	union gsi_evt_scratch evt_scratch;
+	union __packed gsi_channel_scratch ch_scratch;
+	union __packed gsi_evt_scratch evt_scratch;
 	const struct ipa_gsi_ep_config *gsi_ep_info;
 	int result, len;
 	unsigned long va;
@@ -848,25 +848,23 @@ int ipa3_disable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx)
 	 * as IPA uC will fail to suspend the pipe otherwise.
 	 */
 	ep = &ipa3_ctx->ep[ipa_ep_idx_rx];
-	if (IPA_CLIENT_IS_PROD(ep->client)) {
-		source_pipe_bitmask = 1 <<
+	source_pipe_bitmask = 1 <<
 			ipa3_get_ep_mapping(ep->client);
-		result = ipa3_enable_force_clear(ipa_ep_idx_rx,
-				false, source_pipe_bitmask);
-		if (result) {
-			/*
-			 * assuming here modem SSR, AP can remove
-			 * the delay in this case
-			 */
-			IPAERR("failed to force clear %d\n", result);
-			IPAERR("remove delay from SCND reg\n");
-			ep_ctrl_scnd.endp_delay = false;
-			ipahal_write_reg_n_fields(
-				IPA_ENDP_INIT_CTRL_SCND_n, ipa_ep_idx_rx,
-					&ep_ctrl_scnd);
-		} else {
-			disable_force_clear = true;
-		}
+	result = ipa3_enable_force_clear(ipa_ep_idx_rx,
+			false, source_pipe_bitmask);
+	if (result) {
+		/*
+		 * assuming here modem SSR, AP can remove
+		 * the delay in this case
+		 */
+		IPAERR("failed to force clear %d\n", result);
+		IPAERR("remove delay from SCND reg\n");
+		ep_ctrl_scnd.endp_delay = false;
+		ipahal_write_reg_n_fields(
+			IPA_ENDP_INIT_CTRL_SCND_n, ipa_ep_idx_rx,
+			&ep_ctrl_scnd);
+	} else {
+		disable_force_clear = true;
 	}
 
 	/* stop gsi rx channel */
@@ -909,7 +907,7 @@ int ipa3_write_qmapid_wdi3_gsi_pipe(u32 clnt_hdl, u8 qmap_id)
 {
 	int result = 0;
 	struct ipa3_ep_context *ep;
-	union gsi_channel_scratch ch_scratch;
+	union __packed gsi_channel_scratch ch_scratch;
 
 	memset(&ch_scratch, 0, sizeof(ch_scratch));
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||

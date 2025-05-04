@@ -194,14 +194,6 @@ do
 	shift
 done
 
-if test -z "$TORTURE_INITRD" || tools/testing/selftests/rcutorture/bin/mkinitrd.sh
-then
-	:
-else
-	echo No initrd and unable to create one, aborting test >&2
-	exit 1
-fi
-
 CONFIGFRAG=${KVM}/configs/${TORTURE_SUITE}; export CONFIGFRAG
 
 if test -z "$configs"
@@ -467,7 +459,7 @@ then
 elif test "$dryrun" = sched
 then
 	# Extract the test run schedule from the script.
-	egrep 'Start batch|Starting build\.' $T/script |
+	grep -E 'Start batch|Starting build\.' $T/script |
 		grep -v ">>" |
 		sed -e 's/:.*$//' -e 's/^echo //'
 	exit 0

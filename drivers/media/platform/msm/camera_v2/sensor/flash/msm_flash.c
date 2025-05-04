@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2009-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,7 +18,6 @@
 #include <linux/of_gpio.h>
 #include <linux/leds-qpnp-flash.h>
 #include "msm_flash.h"
-#include "msm_camera_io_util.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
 
@@ -56,6 +55,129 @@ static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
 	.i2c_util = msm_sensor_cci_i2c_util,
 	.i2c_poll =  msm_camera_cci_i2c_poll,
 };
+
+#ifdef CONFIG_MACH_SONY_DISCOVERY
+static int32_t msm_flash_prepare(struct msm_flash_ctrl_t *flash_ctrl);
+
+static enum led_brightness msm_flash_brightness_get(struct led_classdev *led_cdev)
+{
+	CDBG("msm_flash_brightness_get: brightness:%d\n", led_cdev->brightness);
+
+	return led_cdev->brightness;
+}
+
+static void msm_flash_high_brightness_set(struct led_classdev *led_cdev,
+						enum led_brightness value)
+{
+	struct msm_flash_ctrl_t *fctrl;
+	int32_t curr = 0, op_curr = 0;
+	int32_t max_current = 0;
+	int32_t i = 0;
+
+	CDBG("msm_flash_high_brightness_set: brightness value:%d\n", value);
+	fctrl = container_of(led_cdev, struct msm_flash_ctrl_t, flash_cdev);
+	if (value < 0) {
+		CDBG("Invalid brightness value\n");
+		return;
+	}
+
+	if (value > 0 && fctrl->flash_state == MSM_CAMERA_FLASH_RELEASE) {
+		fctrl->flash_state = MSM_CAMERA_FLASH_INIT;
+		msm_flash_prepare(fctrl);
+	}
+
+	/* Turn off torch triggers */
+	for (i = 0; i < fctrl->torch_num_sources; i++)
+		if (fctrl->torch_trigger[i])
+			led_trigger_event(fctrl->torch_trigger[i], 0);
+
+	if (value == 0) {
+		/* Turn off flash triggers */
+		for (i = 0; i < fctrl->flash_num_sources; i++)
+			if (fctrl->flash_trigger[i])
+				led_trigger_event(fctrl->flash_trigger[i], 0);
+		if (fctrl->switch_trigger)
+			led_trigger_event(fctrl->switch_trigger, 0);
+		return;
+	}
+
+	/* Turn on flash triggers */
+	op_curr = value / fctrl->flash_num_sources;
+	for (i = 0; i < fctrl->flash_num_sources; i++) {
+		if (fctrl->flash_trigger[i]) {
+			max_current = fctrl->flash_max_current[i];
+			if (op_curr >= 0 && op_curr <= max_current) {
+				curr = op_curr;
+			} else {
+				curr = fctrl->flash_op_current[i];
+				pr_debug("LED flash_current[%d] clamped %d\n",
+					i, curr);
+			}
+			CDBG("high_flash_current[%d] = %d", i, curr);
+			led_trigger_event(fctrl->flash_trigger[i],
+				curr);
+		}
+	}
+	if (fctrl->switch_trigger)
+		led_trigger_event(fctrl->switch_trigger, 1);
+}
+
+static void msm_flash_low_brightness_set(struct led_classdev *led_cdev,
+						enum led_brightness value)
+{
+	struct msm_flash_ctrl_t *fctrl;
+	int32_t curr = 0, op_curr = 0;
+	int32_t max_current = 0;
+	int32_t i = 0;
+
+	CDBG("msm_flash_low_brightness_set: brightness value:%d\n", value);
+	fctrl = container_of(led_cdev, struct msm_flash_ctrl_t, torch_cdev);
+	if (value < 0) {
+		CDBG("Invalid brightness value\n");
+		return;
+	}
+
+	if (value > 0 && fctrl->flash_state == MSM_CAMERA_FLASH_RELEASE) {
+		fctrl->flash_state = MSM_CAMERA_FLASH_INIT;
+		msm_flash_prepare(fctrl);
+	}
+
+	/* Turn off flash triggers */
+	for (i = 0; i < fctrl->flash_num_sources; i++)
+		if (fctrl->flash_trigger[i])
+			led_trigger_event(fctrl->flash_trigger[i], 0);
+
+	if (value == 0) {
+		/* Turn off torch triggers */
+		for (i = 0; i < fctrl->torch_num_sources; i++)
+			if (fctrl->torch_trigger[i])
+				led_trigger_event(fctrl->torch_trigger[i], 0);
+		if (fctrl->switch_trigger)
+			led_trigger_event(fctrl->switch_trigger, 0);
+		return;
+	}
+
+	/* Turn on torch triggers */
+	op_curr = value / fctrl->torch_num_sources;
+	for (i = 0; i < fctrl->torch_num_sources; i++) {
+		if (fctrl->torch_trigger[i]) {
+			max_current = fctrl->torch_max_current[i];
+			if (op_curr >= 0 && op_curr <= max_current) {
+				curr = op_curr;
+			} else {
+				curr = fctrl->torch_op_current[i];
+				pr_debug("LED current clamped to %d\n",
+					curr);
+			}
+			CDBG("low_flash_current[%d] = %d", i, curr);
+			led_trigger_event(fctrl->torch_trigger[i],
+				curr);
+		}
+	}
+	if (fctrl->switch_trigger)
+		led_trigger_event(fctrl->switch_trigger, 1);
+}
+#endif
 
 static void msm_torch_brightness_set(struct led_classdev *led_cdev,
 				enum led_brightness value)
@@ -492,8 +614,6 @@ static int32_t msm_flash_init(
 			__func__, __LINE__,
 			flash_data->cfg.flash_init_info->flash_driver_type);
 	}
-	if (flash_ctrl->platform_flash_init)
-		flash_ctrl->platform_flash_init(flash_ctrl, flash_data);
 
 	if (flash_ctrl->func_tbl->camera_flash_init) {
 		rc = flash_ctrl->func_tbl->camera_flash_init(
@@ -580,8 +700,6 @@ static int32_t msm_flash_prepare(
 		__func__, __LINE__, flash_ctrl->flash_state);
 
 	if (flash_ctrl->switch_trigger == NULL) {
-		if (flash_ctrl->platform_flash_init)
-			return ret;
 		pr_err("%s:%d Invalid argument\n",
 				__func__, __LINE__);
 		return -EINVAL;
@@ -891,6 +1009,59 @@ static struct v4l2_subdev_ops msm_flash_subdev_ops = {
 };
 
 static const struct v4l2_subdev_internal_ops msm_flash_internal_ops;
+
+#ifdef CONFIG_MACH_SONY_DISCOVERY
+static int32_t msm_flash_get_cdev_data(
+	struct device_node *of_node,
+	struct msm_flash_ctrl_t *fctrl)
+{
+	int32_t rc = 0;
+	int32_t i = 0;
+
+	rc = of_property_read_string(of_node, "qcom,led-name",
+					&fctrl->flash_cdev.name);
+	if (rc < 0) {
+		rc = of_property_read_string(of_node, "linux,name",
+						&fctrl->flash_cdev.name);
+		if (rc < 0) {
+			pr_err("Unable to read flash name\n");
+			return rc;
+		}
+	}
+
+	rc = of_property_read_string(of_node, "qcom,led-name",
+					&fctrl->torch_cdev.name);
+	if (rc < 0) {
+		rc = of_property_read_string(of_node, "linux,name",
+						&fctrl->torch_cdev.name);
+		if (rc < 0) {
+			pr_err("Unable to read flash name\n");
+			return rc;
+		}
+	}
+
+	fctrl->flash_cdev.max_brightness = 0;
+	for (i = 0; i < fctrl->flash_num_sources; i++) {
+		if (fctrl->flash_trigger[i]) {
+			fctrl->flash_cdev.max_brightness += fctrl->flash_max_current[i];
+		}
+	}
+	fctrl->flash_cdev.brightness = LED_OFF;
+	fctrl->flash_cdev.brightness_set = msm_flash_high_brightness_set;
+	fctrl->flash_cdev.brightness_get = msm_flash_brightness_get;
+
+	fctrl->torch_cdev.max_brightness = 0;
+	for (i = 0; i < fctrl->torch_num_sources; i++) {
+		if (fctrl->torch_trigger[i]) {
+			fctrl->torch_cdev.max_brightness += fctrl->torch_max_current[i];
+		}
+	}
+	fctrl->torch_cdev.brightness = LED_OFF;
+	fctrl->torch_cdev.brightness_set = msm_flash_low_brightness_set;
+	fctrl->torch_cdev.brightness_get = msm_flash_brightness_get;
+	return 0;
+}
+#endif
 
 static int32_t msm_flash_get_pmic_source_info(
 	struct device_node *of_node,
@@ -1268,9 +1439,29 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 		kfree(flash_ctrl);
 		return -EINVAL;
 	}
-	if (flash_ctrl->flash_driver_type == FLASH_DRIVER_GPIO)
-		platform_set_drvdata(pdev, flash_ctrl);
 
+#ifdef CONFIG_MACH_SONY_DISCOVERY
+	rc = msm_flash_get_cdev_data(pdev->dev.of_node, flash_ctrl);
+	if (rc == 0) {
+		rc = led_classdev_register(&pdev->dev, &flash_ctrl->flash_cdev);
+		if (rc) {
+			pr_err("%s: Failed to register flash led dev. rc = %d\n",
+				__func__, rc);
+			rc = 0;
+			goto error_register;
+		}
+		rc = led_classdev_register(&pdev->dev, &flash_ctrl->torch_cdev);
+		if (rc) {
+			pr_err("%s: Failed to register torch led dev. rc = %d\n",
+				__func__, rc);
+			led_classdev_unregister(&flash_ctrl->flash_cdev);
+			rc = 0;
+			goto error_register;
+		}
+	} else
+		rc = 0;
+error_register:
+#endif
 	flash_ctrl->flash_state = MSM_CAMERA_FLASH_RELEASE;
 	flash_ctrl->power_info.dev = &flash_ctrl->pdev->dev;
 	flash_ctrl->flash_device_type = MSM_CAMERA_PLATFORM_DEVICE;
@@ -1317,11 +1508,6 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 
 	CDBG("probe success\n");
 	return rc;
-}
-
-int32_t camera_flash_platform_probe(struct platform_device *pdev)
-{
-	return msm_flash_platform_probe(pdev);
 }
 
 MODULE_DEVICE_TABLE(of, msm_flash_dt_match);

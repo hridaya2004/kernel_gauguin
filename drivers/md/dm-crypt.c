@@ -46,11 +46,11 @@
 struct convert_context {
 	struct completion restart;
 	struct bio *bio_in;
-	struct bvec_iter iter_in;
 	struct bio *bio_out;
+	struct bvec_iter iter_in;
 	struct bvec_iter iter_out;
-	atomic_t cc_pending;
 	u64 cc_sector;
+	atomic_t cc_pending;
 	union {
 		struct skcipher_request *req;
 		struct aead_request *req_aead;
@@ -1661,7 +1661,6 @@ pop_from_list:
 			io = crypt_io_from_node(rb_first(&write_tree));
 			rb_erase(&io->rb_node, &write_tree);
 			kcryptd_io_write(io);
-			cond_resched();
 		} while (!RB_EMPTY_ROOT(&write_tree));
 		blk_finish_plug(&plug);
 	}
@@ -1733,12 +1732,6 @@ static void kcryptd_crypt_write_convert(struct dm_crypt_io *io)
 
 	io->ctx.bio_out = clone;
 	io->ctx.iter_out = clone->bi_iter;
-
-	if (crypt_integrity_aead(cc)) {
-		bio_copy_data(clone, io->base_bio);
-		io->ctx.bio_in = clone;
-		io->ctx.iter_in = clone->bi_iter;
-	}
 
 	sector += bio_sectors(clone);
 
@@ -2873,6 +2866,7 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	wake_up_process(cc->write_thread);
 
 	ti->num_flush_bios = 1;
+	ti->limit_swap_bios = true;
 
 	return 0;
 
@@ -2892,8 +2886,7 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	 * - for REQ_OP_DISCARD caller must use flush if IO ordering matters
 	 */
 	if (unlikely(bio->bi_opf & REQ_PREFLUSH ||
-	    bio_op(bio) == REQ_OP_DISCARD ||
-	    bio_should_skip_dm_default_key(bio))) {
+	    bio_op(bio) == REQ_OP_DISCARD)) {
 		bio_set_dev(bio, cc->dev->bdev);
 		if (bio_sectors(bio))
 			bio->bi_iter.bi_sector = cc->start +

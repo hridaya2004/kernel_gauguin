@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2011-2018, 2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -83,13 +83,9 @@ static void msm_sensor_misc_regulator(
 
 int32_t msm_sensor_free_sensor_data(struct msm_sensor_ctrl_t *s_ctrl)
 {
-	struct msm_camera_sensor_slave_info *slave_info = NULL;
-
 	if (!s_ctrl->pdev && !s_ctrl->sensor_i2c_client->client)
 		return 0;
 	kfree(s_ctrl->sensordata->slave_info);
-	slave_info = s_ctrl->sensordata->cam_slave_info;
-	kfree(slave_info->sensor_id_info.setting.reg_setting);
 	kfree(s_ctrl->sensordata->cam_slave_info);
 	kfree(s_ctrl->sensordata->actuator_info);
 	kfree(s_ctrl->sensordata->power_info.gpio_conf->gpio_num_info);
@@ -205,9 +201,6 @@ int msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
 					&msm_sensor_secure_func_tbl;
 			}
 		}
-#if IS_ENABLED(CONFIG_ARCH_QM215)
-		msleep(60);
-#endif
 		rc = msm_camera_power_up(power_info, s_ctrl->sensor_device_type,
 			sensor_i2c_client);
 		if (rc < 0)
@@ -267,16 +260,6 @@ int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 			__func__, __LINE__, sensor_i2c_client, slave_info,
 			sensor_name);
 		return -EINVAL;
-	}
-
-	if (slave_info->setting && slave_info->setting->size > 0) {
-		rc = s_ctrl->sensor_i2c_client->i2c_func_tbl->i2c_write_table(
-			s_ctrl->sensor_i2c_client, slave_info->setting);
-		if (rc < 0)
-			pr_err("Write array failed prior to probe\n");
-
-	} else {
-		CDBG("No writes needed for this sensor before probe\n");
 	}
 
 	rc = sensor_i2c_client->i2c_func_tbl->i2c_read(

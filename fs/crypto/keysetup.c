@@ -141,10 +141,8 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 	if (IS_ERR(tfm))
 		return PTR_ERR(tfm);
 	/*
-	 * Pairs with the smp_load_acquire() in fscrypt_is_key_prepared().
-	 * I.e., here we publish ->tfm with a RELEASE barrier so that
-	 * concurrent tasks can ACQUIRE it.  Note that this concurrency is only
-	 * possible for per-mode keys, not for per-file keys.
+	 * Pairs with READ_ONCE() in fscrypt_is_key_prepared().  (Only matters
+	 * for the per-mode keys, which are shared by multiple inodes.)
 	 */
 	smp_store_release(&prep_key->tfm, tfm);
 	return 0;
@@ -170,6 +168,7 @@ static int setup_per_mode_enc_key(struct fscrypt_info *ci,
 				  struct fscrypt_prepared_key *keys,
 				  u8 hkdf_context, bool include_fs_uuid)
 {
+	static DEFINE_MUTEX(mode_key_setup_mutex);
 	const struct inode *inode = ci->ci_inode;
 	const struct super_block *sb = inode->i_sb;
 	struct fscrypt_mode *mode = ci->ci_mode;
@@ -238,37 +237,10 @@ static int setup_per_mode_enc_key(struct fscrypt_info *ci,
 	}
 done_unlock:
 	ci->ci_key = *prep_key;
-
 	err = 0;
 out_unlock:
 	mutex_unlock(&fscrypt_mode_key_setup_mutex);
 	return err;
-}
-
-/*
- * Derive a SipHash key from the given fscrypt master key and the given
- * application-specific information string.
- *
- * Note that the KDF produces a byte array, but the SipHash APIs expect the key
- * as a pair of 64-bit words.  Therefore, on big endian CPUs we have to do an
- * endianness swap in order to get the same results as on little endian CPUs.
- */
-static int fscrypt_derive_siphash_key(const struct fscrypt_master_key *mk,
-				      u8 context, const u8 *info,
-				      unsigned int infolen, siphash_key_t *key)
-{
-	int err;
-
-	err = fscrypt_hkdf_expand(&mk->mk_secret.hkdf, context, info, infolen,
-				  (u8 *)key, sizeof(*key));
-	if (err)
-		return err;
-
-	BUILD_BUG_ON(sizeof(*key) != 16);
-	BUILD_BUG_ON(ARRAY_SIZE(key->key) != 2);
-	le64_to_cpus(&key->key[0]);
-	le64_to_cpus(&key->key[1]);
-	return 0;
 }
 
 int fscrypt_derive_dirhash_key(struct fscrypt_info *ci,
@@ -276,9 +248,10 @@ int fscrypt_derive_dirhash_key(struct fscrypt_info *ci,
 {
 	int err;
 
-	err = fscrypt_derive_siphash_key(mk, HKDF_CONTEXT_DIRHASH_KEY,
-					 ci->ci_nonce, FS_KEY_DERIVATION_NONCE_SIZE,
-					 &ci->ci_dirhash_key);
+	err = fscrypt_hkdf_expand(&mk->mk_secret.hkdf, HKDF_CONTEXT_DIRHASH_KEY,
+				  ci->ci_nonce, FS_KEY_DERIVATION_NONCE_SIZE,
+				  (u8 *)&ci->ci_dirhash_key,
+				  sizeof(ci->ci_dirhash_key));
 	if (err)
 		return err;
 	ci->ci_dirhash_key_initialized = true;
@@ -303,9 +276,10 @@ static int fscrypt_setup_iv_ino_lblk_32_key(struct fscrypt_info *ci,
 		if (mk->mk_ino_hash_key_initialized)
 			goto unlock;
 
-		err = fscrypt_derive_siphash_key(mk,
-						 HKDF_CONTEXT_INODE_HASH_KEY,
-						 NULL, 0, &mk->mk_ino_hash_key);
+		err = fscrypt_hkdf_expand(&mk->mk_secret.hkdf,
+					  HKDF_CONTEXT_INODE_HASH_KEY, NULL, 0,
+					  (u8 *)&mk->mk_ino_hash_key,
+					  sizeof(mk->mk_ino_hash_key));
 		if (err)
 			goto unlock;
 		/* pairs with smp_load_acquire() above */
@@ -503,9 +477,18 @@ static void put_crypt_info(struct fscrypt_info *ci)
 
 	if (ci->ci_direct_key)
 		fscrypt_put_direct_key(ci->ci_direct_key);
-	else if (ci->ci_owns_key)
-		fscrypt_destroy_prepared_key(&ci->ci_key);
-
+	else if (ci->ci_owns_key) {
+		if (fscrypt_policy_contents_mode(&ci->ci_policy) !=
+		    FSCRYPT_MODE_PRIVATE) {
+			fscrypt_destroy_prepared_key(&ci->ci_key);
+		} else {
+			crypto_free_skcipher(ci->ci_key.tfm);
+#ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
+			if (ci->ci_key.blk_key)
+				kzfree(ci->ci_key.blk_key);
+#endif
+		}
+	}
 	key = ci->ci_master_key;
 	if (key) {
 		struct fscrypt_master_key *mk = key->payload.data[0];
@@ -546,18 +529,21 @@ int fscrypt_get_encryption_info(struct inode *inode)
 
 	res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
 	if (res < 0) {
-		const union fscrypt_context *dummy_ctx =
-			fscrypt_get_dummy_context(inode->i_sb);
-
-		if (IS_ENCRYPTED(inode) || !dummy_ctx) {
+		if (!fscrypt_dummy_context_enabled(inode) ||
+		    IS_ENCRYPTED(inode)) {
 			fscrypt_warn(inode,
 				     "Error %d getting encryption context",
 				     res);
 			return res;
 		}
 		/* Fake up a context for an unencrypted directory */
-		res = fscrypt_context_size(dummy_ctx);
-		memcpy(&ctx, dummy_ctx, res);
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.version = FSCRYPT_CONTEXT_V1;
+		ctx.v1.contents_encryption_mode = FSCRYPT_MODE_AES_256_XTS;
+		ctx.v1.filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS;
+		memset(ctx.v1.master_key_descriptor, 0x42,
+		       FSCRYPT_KEY_DESCRIPTOR_SIZE);
+		res = sizeof(ctx.v1);
 	}
 
 	crypt_info = kmem_cache_zalloc(fscrypt_info_cachep, GFP_NOFS);
@@ -623,8 +609,7 @@ out:
 EXPORT_SYMBOL(fscrypt_get_encryption_info);
 
 /**
- * fscrypt_put_encryption_info() - free most of an inode's fscrypt data
- * @inode: an inode being evicted
+ * fscrypt_put_encryption_info - free most of an inode's fscrypt data
  *
  * Free the inode's fscrypt_info.  Filesystems must call this when the inode is
  * being evicted.  An RCU grace period need not have elapsed yet.
@@ -637,8 +622,7 @@ void fscrypt_put_encryption_info(struct inode *inode)
 EXPORT_SYMBOL(fscrypt_put_encryption_info);
 
 /**
- * fscrypt_free_inode() - free an inode's fscrypt data requiring RCU delay
- * @inode: an inode being freed
+ * fscrypt_free_inode - free an inode's fscrypt data requiring RCU delay
  *
  * Free the inode's cached decrypted symlink target, if any.  Filesystems must
  * call this after an RCU grace period, just before they free the inode.
@@ -653,8 +637,7 @@ void fscrypt_free_inode(struct inode *inode)
 EXPORT_SYMBOL(fscrypt_free_inode);
 
 /**
- * fscrypt_drop_inode() - check whether the inode's master key has been removed
- * @inode: an inode being considered for eviction
+ * fscrypt_drop_inode - check whether the inode's master key has been removed
  *
  * Filesystems supporting fscrypt must call this from their ->drop_inode()
  * method so that encrypted inodes are evicted as soon as they're no longer in

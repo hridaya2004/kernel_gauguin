@@ -543,6 +543,8 @@ static int devfreq_notifier_call(struct notifier_block *nb, unsigned long type,
 	mutex_lock(&devfreq->lock);
 
 	devfreq->scaling_min_freq = find_available_min_freq(devfreq);
+	if (!devfreq->scaling_min_freq)
+		goto out;
 
 	devfreq->scaling_max_freq = find_available_max_freq(devfreq);
 	if (!devfreq->scaling_max_freq) {
@@ -581,7 +583,6 @@ static void devfreq_dev_release(struct device *dev)
 
 	mutex_destroy(&devfreq->lock);
 	mutex_destroy(&devfreq->event_lock);
-	srcu_cleanup_notifier_head(&devfreq->transition_notifier_list);
 	kfree(devfreq);
 }
 
@@ -1077,10 +1078,6 @@ static ssize_t governor_store(struct device *dev, struct device_attribute *attr,
 	}
 
 	mutex_lock(&df->event_lock);
-	if (df->dev_suspended) {
-		ret = -EINVAL;
-		goto gov_stop_out;
-	}
 	if (df->governor) {
 		ret = df->governor->event_handler(df, DEVFREQ_GOV_STOP, NULL);
 		if (ret) {

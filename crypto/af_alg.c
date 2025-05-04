@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/net.h>
 #include <linux/rwsem.h>
-#include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/security.h>
 
@@ -430,12 +429,12 @@ int af_alg_make_sg(struct af_alg_sgl *sgl, struct iov_iter *iter, int len)
 }
 EXPORT_SYMBOL_GPL(af_alg_make_sg);
 
-static void af_alg_link_sg(struct af_alg_sgl *sgl_prev,
-			   struct af_alg_sgl *sgl_new)
+void af_alg_link_sg(struct af_alg_sgl *sgl_prev, struct af_alg_sgl *sgl_new)
 {
 	sg_unmark_end(sgl_prev->sg + sgl_prev->npages - 1);
 	sg_chain(sgl_prev->sg, sgl_prev->npages + 1, sgl_new->sg);
 }
+EXPORT_SYMBOL_GPL(af_alg_link_sg);
 
 void af_alg_free_sg(struct af_alg_sgl *sgl)
 {
@@ -446,7 +445,7 @@ void af_alg_free_sg(struct af_alg_sgl *sgl)
 }
 EXPORT_SYMBOL_GPL(af_alg_free_sg);
 
-static int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
+int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
 {
 	struct cmsghdr *cmsg;
 
@@ -485,6 +484,7 @@ static int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(af_alg_cmsg_send);
 
 /**
  * af_alg_alloc_tsgl - allocate the TX SGL
@@ -492,7 +492,7 @@ static int af_alg_cmsg_send(struct msghdr *msg, struct af_alg_control *con)
  * @sk socket of connection to user space
  * @return: 0 upon success, < 0 upon error
  */
-static int af_alg_alloc_tsgl(struct sock *sk)
+int af_alg_alloc_tsgl(struct sock *sk)
 {
 	struct alg_sock *ask = alg_sk(sk);
 	struct af_alg_ctx *ctx = ask->private;
@@ -521,6 +521,7 @@ static int af_alg_alloc_tsgl(struct sock *sk)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(af_alg_alloc_tsgl);
 
 /**
  * aead_count_tsgl - Count number of TX SG entries
@@ -649,7 +650,6 @@ void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
 
 	if (!ctx->used)
 		ctx->merge = 0;
-	ctx->init = ctx->more;
 }
 EXPORT_SYMBOL_GPL(af_alg_pull_tsgl);
 
@@ -658,7 +658,7 @@ EXPORT_SYMBOL_GPL(af_alg_pull_tsgl);
  *
  * @areq Request holding the TX and RX SGL
  */
-static void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
+void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 {
 	struct sock *sk = areq->sk;
 	struct alg_sock *ask = alg_sk(sk);
@@ -687,6 +687,7 @@ static void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 		sock_kfree_s(sk, tsgl, areq->tsgl_entries * sizeof(*tsgl));
 	}
 }
+EXPORT_SYMBOL_GPL(af_alg_free_areq_sgls);
 
 /**
  * af_alg_wait_for_wmem - wait for availability of writable memory
@@ -695,7 +696,7 @@ static void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
  * @flags If MSG_DONTWAIT is set, then only report if function would sleep
  * @return 0 when writable memory is available, < 0 upon error
  */
-static int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
+int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	int err = -ERESTARTSYS;
@@ -720,6 +721,7 @@ static int af_alg_wait_for_wmem(struct sock *sk, unsigned int flags)
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(af_alg_wait_for_wmem);
 
 /**
  * af_alg_wmem_wakeup - wakeup caller when writable memory is available
@@ -749,10 +751,9 @@ EXPORT_SYMBOL_GPL(af_alg_wmem_wakeup);
  *
  * @sk socket of connection to user space
  * @flags If MSG_DONTWAIT is set, then only report if function would sleep
- * @min Set to minimum request size if partial requests are allowed.
  * @return 0 when writable memory is available, < 0 upon error
  */
-int af_alg_wait_for_data(struct sock *sk, unsigned flags, unsigned min)
+int af_alg_wait_for_data(struct sock *sk, unsigned flags)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	struct alg_sock *ask = alg_sk(sk);
@@ -770,9 +771,7 @@ int af_alg_wait_for_data(struct sock *sk, unsigned flags, unsigned min)
 		if (signal_pending(current))
 			break;
 		timeout = MAX_SCHEDULE_TIMEOUT;
-		if (sk_wait_event(sk, &timeout,
-				  ctx->init && (!ctx->more ||
-						(min && ctx->used >= min)),
+		if (sk_wait_event(sk, &timeout, (ctx->used || !ctx->more),
 				  &wait)) {
 			err = 0;
 			break;
@@ -791,7 +790,8 @@ EXPORT_SYMBOL_GPL(af_alg_wait_for_data);
  *
  * @sk socket of connection to user space
  */
-static void af_alg_data_wakeup(struct sock *sk)
+
+void af_alg_data_wakeup(struct sock *sk)
 {
 	struct alg_sock *ask = alg_sk(sk);
 	struct af_alg_ctx *ctx = ask->private;
@@ -809,6 +809,7 @@ static void af_alg_data_wakeup(struct sock *sk)
 	sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
 	rcu_read_unlock();
 }
+EXPORT_SYMBOL_GPL(af_alg_data_wakeup);
 
 /**
  * af_alg_sendmsg - implementation of sendmsg system call handler
@@ -861,17 +862,10 @@ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	}
 
 	lock_sock(sk);
-	if (ctx->init && !ctx->more) {
-		if (ctx->used) {
-			err = -EINVAL;
-			goto unlock;
-		}
-
-		pr_info_once(
-			"%s sent an empty control message without MSG_MORE.\n",
-			current->comm);
+	if (!ctx->more && ctx->used) {
+		err = -EINVAL;
+		goto unlock;
 	}
-	ctx->init = true;
 
 	if (init) {
 		ctx->enc = enc;
@@ -1038,13 +1032,9 @@ EXPORT_SYMBOL_GPL(af_alg_sendpage);
 void af_alg_free_resources(struct af_alg_async_req *areq)
 {
 	struct sock *sk = areq->sk;
-	struct af_alg_ctx *ctx;
 
 	af_alg_free_areq_sgls(areq);
 	sock_kfree_s(sk, areq, areq->areqlen);
-
-	ctx = alg_sk(sk)->private;
-	ctx->inflight = false;
 }
 EXPORT_SYMBOL_GPL(af_alg_free_resources);
 
@@ -1108,18 +1098,10 @@ EXPORT_SYMBOL_GPL(af_alg_poll);
 struct af_alg_async_req *af_alg_alloc_areq(struct sock *sk,
 					   unsigned int areqlen)
 {
-	struct af_alg_ctx *ctx = alg_sk(sk)->private;
-	struct af_alg_async_req *areq;
+	struct af_alg_async_req *areq = sock_kmalloc(sk, areqlen, GFP_KERNEL);
 
-	/* Only one AIO request can be in flight. */
-	if (ctx->inflight)
-		return ERR_PTR(-EBUSY);
-
-	areq = sock_kmalloc(sk, areqlen, GFP_KERNEL);
 	if (unlikely(!areq))
 		return ERR_PTR(-ENOMEM);
-
-	ctx->inflight = true;
 
 	areq->areqlen = areqlen;
 	areq->sk = sk;

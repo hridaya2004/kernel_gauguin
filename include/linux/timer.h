@@ -7,7 +7,6 @@
 #include <linux/stddef.h>
 #include <linux/debugobjects.h>
 #include <linux/stringify.h>
-#include <linux/android_kabi.h>
 
 struct timer_list {
 	/*
@@ -22,9 +21,6 @@ struct timer_list {
 #ifdef CONFIG_LOCKDEP
 	struct lockdep_map	lockdep_map;
 #endif
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
 };
 
 #ifdef CONFIG_LOCKDEP
@@ -184,7 +180,11 @@ extern int try_to_del_timer_sync(struct timer_list *timer);
 
 extern struct timer_base timer_base_deferrable;
 
-extern int del_timer_sync(struct timer_list *timer);
+#ifdef CONFIG_SMP
+  extern int del_timer_sync(struct timer_list *timer);
+#else
+# define del_timer_sync(t)		del_timer(t)
+#endif
 
 #define del_singleshot_timer_sync(t) del_timer_sync(t)
 

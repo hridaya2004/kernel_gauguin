@@ -2792,7 +2792,7 @@ int snd_soc_register_card(struct snd_soc_card *card)
 	mutex_init(&card->mutex);
 	mutex_init(&card->dapm_mutex);
 	mutex_init(&card->dapm_power_mutex);
-	spin_lock_init(&card->dpcm_lock);
+        spin_lock_init(&card->dpcm_lock);
 
 	ret = snd_soc_instantiate_card(card);
 	if (ret != 0)
@@ -3778,7 +3778,7 @@ int snd_soc_info_multi_ext(struct snd_kcontrol *kcontrol,
 	uinfo->value.integer.max = platform_max;
 	return 0;
 }
-EXPORT_SYMBOL_GPL(snd_soc_info_multi_ext);
+EXPORT_SYMBOL(snd_soc_info_multi_ext);
 
 int snd_soc_get_dai_name(struct of_phandle_args *args,
 				const char **dai_name)
@@ -3948,23 +3948,10 @@ EXPORT_SYMBOL_GPL(snd_soc_of_get_dai_link_codecs);
 
 static int __init snd_soc_init(void)
 {
-	int ret;
-
 	snd_soc_debugfs_init();
-	ret = snd_soc_util_init();
-	if (ret)
-		goto err_util_init;
+	snd_soc_util_init();
 
-	ret = platform_driver_register(&soc_driver);
-	if (ret)
-		goto err_register;
-	return 0;
-
-err_register:
-	snd_soc_util_exit();
-err_util_init:
-	snd_soc_debugfs_exit();
-	return ret;
+	return platform_driver_register(&soc_driver);
 }
 module_init(snd_soc_init);
 

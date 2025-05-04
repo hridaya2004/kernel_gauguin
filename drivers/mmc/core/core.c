@@ -26,6 +26,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/pm_wakeup.h>
 #include <linux/suspend.h>
+#ifdef CONFIG_SONY_MMC_EXTENSION
+#include <linux/sony_ext_uim_ctrl.h>
+#endif
 #include <linux/fault-inject.h>
 #include <linux/random.h>
 #include <linux/slab.h>
@@ -537,7 +540,7 @@ static int mmc_devfreq_set_target(struct device *dev,
 		*freq, current->comm);
 
 	spin_lock_irqsave(&clk_scaling->lock, flags);
-	if (clk_scaling->curr_freq == *freq ||
+	if (clk_scaling->target_freq == *freq ||
 		clk_scaling->skip_clk_scale_freq_update) {
 		spin_unlock_irqrestore(&clk_scaling->lock, flags);
 		goto out;
@@ -692,12 +695,6 @@ static int mmc_devfreq_create_freq_table(struct mmc_host *host)
 		pr_debug("%s: frequency table overshot possible freq (%d)\n",
 				mmc_hostname(host), clk_scaling->freq_table[i]);
 		break;
-	}
-
-	if (mmc_card_sd(host->card) && (clk_scaling->freq_table_sz < 2)) {
-		clk_scaling->freq_table[clk_scaling->freq_table_sz] =
-				host->card->clk_scaling_highest;
-		clk_scaling->freq_table_sz++;
 	}
 
 out:
@@ -1454,26 +1451,21 @@ int mmc_cqe_recovery(struct mmc_host *host)
 	host->cqe_ops->cqe_recovery_start(host);
 
 	memset(&cmd, 0, sizeof(cmd));
-	cmd.opcode       = MMC_STOP_TRANSMISSION;
-	cmd.flags        = MMC_RSP_R1B | MMC_CMD_AC;
+	cmd.opcode       = MMC_STOP_TRANSMISSION,
+	cmd.flags        = MMC_RSP_R1B | MMC_CMD_AC,
 	cmd.flags       &= ~MMC_RSP_CRC; /* Ignore CRC */
-	cmd.busy_timeout = MMC_CQE_RECOVERY_TIMEOUT;
-	mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
-
-	mmc_poll_for_busy(host->card, MMC_CQE_RECOVERY_TIMEOUT, true, true);
+	cmd.busy_timeout = MMC_CQE_RECOVERY_TIMEOUT,
+	mmc_wait_for_cmd(host, &cmd, 0);
 
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.opcode       = MMC_CMDQ_TASK_MGMT;
 	cmd.arg          = 1; /* Discard entire queue */
 	cmd.flags        = MMC_RSP_R1B | MMC_CMD_AC;
 	cmd.flags       &= ~MMC_RSP_CRC; /* Ignore CRC */
-	cmd.busy_timeout = MMC_CQE_RECOVERY_TIMEOUT;
-	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
+	cmd.busy_timeout = MMC_CQE_RECOVERY_TIMEOUT,
+	err = mmc_wait_for_cmd(host, &cmd, 0);
 
 	host->cqe_ops->cqe_recovery_finish(host);
-
-	if (err)
-		err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
 
 	mmc_retune_release(host);
 
@@ -2388,13 +2380,7 @@ u32 mmc_select_voltage(struct mmc_host *host, u32 ocr)
 		mmc_power_cycle(host, ocr);
 	} else {
 		bit = fls(ocr) - 1;
-		/*
-		 * The bit variable represents the highest voltage bit set in
-		 * the OCR register.
-		 * To keep a range of 2 values (e.g. 3.2V/3.3V and 3.3V/3.4V),
-		 * we must shift the mask '3' with (bit - 1).
-		 */
-		ocr &= 3 << (bit - 1);
+		ocr &= 3 << bit;
 		if (bit != host->ios.vdd)
 			dev_warn(mmc_dev(host), "exceeding card's volts\n");
 	}
@@ -2502,7 +2488,14 @@ int mmc_set_uhs_voltage(struct mmc_host *host, u32 ocr)
 	}
 
 	/* Wait for at least 1 ms according to spec */
+#ifndef CONFIG_SONY_MMC_EXTENSION
 	mmc_delay(1);
+#else
+	if (host->caps & MMC_CAP_NONREMOVABLE)
+		mmc_delay(1);
+	else
+		mmc_delay(40);
+#endif
 
 	/*
 	 * Failure to switch is indicated by the card holding
@@ -2726,11 +2719,10 @@ int mmc_resume_bus(struct mmc_host *host)
 		}
 		if (host->card->ext_csd.cmdq_en && !host->cqe_enabled) {
 			err = host->cqe_ops->cqe_enable(host, host->card);
+			host->cqe_enabled = true;
 			if (err)
 				pr_err("%s: %s: cqe enable failed: %d\n",
 				       mmc_hostname(host), __func__, err);
-			else
-				host->cqe_enabled = true;
 		}
 	}
 
@@ -3533,9 +3525,14 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 		if (!mmc_attach_sdio(host))
 			return 0;
 
-	if (!(host->caps2 & MMC_CAP2_NO_SD))
+	if (!(host->caps2 & MMC_CAP2_NO_SD)) {
 		if (!mmc_attach_sd(host))
 			return 0;
+#ifdef CONFIG_SONY_EXT_UIM_CTRL
+		else
+			mmc_gpio_tray_close_set_uim2(host, 1);
+#endif /* CONFIG_SONY_EXT_UIM_CTRL */
+	}
 
 	if (!(host->caps2 & MMC_CAP2_NO_MMC))
 		if (!mmc_attach_mmc(host))
@@ -3723,6 +3720,10 @@ void mmc_stop_host(struct mmc_host *host)
 
 	host->rescan_disable = 1;
 	cancel_delayed_work_sync(&host->detect);
+
+#ifdef CONFIG_SONY_EXT_UIM_CTRL
+	sony_ext_uim_ctrl_set_uim2_detect_en(0);
+#endif /* CONFIG_SONY_EXT_UIM_CTRL */
 
 	/* clear pm flags now and let card drivers set them as needed */
 	host->pm_flags = 0;

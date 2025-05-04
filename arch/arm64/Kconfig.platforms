@@ -183,14 +183,6 @@ config ARCH_BENGAL
 	  This enables support for the BENGAL chipset. If you do not
 	  wish to build a kernel that runs on this chipset, say 'N' here.
 
-config ARCH_KHAJE
-	bool "Enable Support for Qualcomm Technologies, Inc. KHAJE"
-	depends on ARCH_QCOM
-	select COMMON_CLK_QCOM
-	help
-	  This enables support for the KHAJE chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
-
 config ARCH_SCUBA
 	bool "Enable Support for Qualcomm Technologies, Inc. SCUBA"
 	depends on ARCH_QCOM
@@ -199,26 +191,15 @@ config ARCH_SCUBA
 	  This enables support for the SCUBA chipset. If you do not
 	  wish to build a kernel that runs on this chipset, say 'N' here.
 
-config ARCH_QM215
-	bool "Enable Support for Qualcomm Technologies Inc. QM215"
+config ARCH_SDM630
+	bool "Enable Support for Qualcomm Technologies, Inc. SDM630"
 	depends on ARCH_QCOM
-	select CPU_FREQ_QCOM
 	select COMMON_CLK
 	select COMMON_CLK_QCOM
+	select QCOM_GDSC
 	help
-	  This enables support for the QM215 chipset. If you do not
+	  This enables support for the SDM630 chipset. If you do not
 	  wish to build a kernel that runs on this chipset, say 'N' here.
-
-config ARCH_MSM8937
-	bool "Enable Support for Qualcomm Technologies Inc. MSM8937"
-	depends on ARCH_QCOM
-	select CPU_FREQ_QCOM
-	select COMMON_CLK
-	select COMMON_CLK_QCOM
-	help
-	  This enables support for the MSM8937 chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
-
 
 config ARCH_SDM660
 	bool "Enable Support for Qualcomm Technologies, Inc. SDM660"
@@ -230,51 +211,39 @@ config ARCH_SDM660
 	  This enables support for the SDM660 chipset. If you do not
 	  wish to build a kernel that runs on this chipset, say 'N' here.
 
+config ARCH_SDM845
+	bool "Enable Support for Qualcomm Technologies Inc. SDM845"
+	depends on ARCH_QCOM
+	select COMMON_CLK
+	select COMMON_CLK_QCOM
+	select QCOM_GDSC
+	help
+	  This enables support for the SDM845 chipset. If you do not
+	  wish to build a kernel that runs on this chipset, say 'N' here.
+
+config ARCH_SM8150
+	bool "Enable Support for Qualcomm Technologies, Inc. SM8150"
+	depends on ARCH_QCOM
+	select COMMON_CLK
+	select COMMON_CLK_QCOM
+	help
+	  This enables support for the SM8150 chipset. If you do not
+	  wish to build a kernel that runs on this chipset, say 'N' here.
+
+config ARCH_TRINKET
+	bool "Enable Support for Qualcomm Technologies, Inc. TRINKET"
+	depends on ARCH_QCOM
+	select COMMON_CLK
+	select COMMON_CLK_QCOM
+	help
+	  This enables support for the TRINKET chipset. If you do not
+	  wish to build a kernel that runs on this chipset, say 'N' here.
+
 config ARCH_REALTEK
 	bool "Realtek Platforms"
 	help
 	  This enables support for the ARMv8 based Realtek chipsets,
 	  like the RTD1295.
-
-config ARCH_SDM429
-	bool "Enable Support for Qualcomm Technologies Inc. SDM429"
-	depends on ARCH_QCOM
-	select CPU_FREQ_QCOM
-	select COMMON_CLK
-	select COMMON_CLK_QCOM
-	help
-	  This enables support for the sdm429 chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
-
-config ARCH_SDM439
-	bool "Enable Support for Qualcomm Technologies Inc. SDM439"
-	depends on ARCH_QCOM
-	select CPU_FREQ_QCOM
-	select COMMON_CLK
-	select COMMON_CLK_QCOM
-	help
-	  This enables support for the sdm439 chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
-
-config ARCH_MSM8953
-	bool "Enable Support for Qualcomm Technologies Inc. MSM8953"
-	depends on ARCH_QCOM
-	select COMMON_CLK_QCOM
-	select QCOM_GDSC
-	select CPU_FREQ_QCOM
-	help
-	  This enables support for the MSM8953 chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
-
-config ARCH_SDM450
-	bool "Enable Support for Qualcomm Technologies Inc. SDM450"
-	depends on ARCH_QCOM
-	select COMMON_CLK_QCOM
-	select QCOM_GDSC
-	select CPU_FREQ_QCOM
-	help
-	  This enables support for the sdm450 chipset. If you do not
-	  wish to build a kernel that runs on this chipset, say 'N' here.
 
 config ARCH_ROCKCHIP
 	bool "Rockchip Platforms"
@@ -427,5 +396,194 @@ config ARCH_ZYNQMP
 	bool "Xilinx ZynqMP Family"
 	help
 	  This enables support for Xilinx ZynqMP Family
+
+config ARCH_SONY_NILE
+	bool "Sony Mobile Nile platform"
+	depends on ARCH_SDM630
+	help
+	  Support for the SONY Mobile Nile platform
+	  which is based on QCOM SDM630 chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_PIONEER
+	bool "Sony Mobile Pioneer"
+	depends on ARCH_SONY_NILE
+	help
+	  Support for the SONY Mobile Pioneer device
+	  which is based on SONY Nile platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_DISCOVERY
+	bool "Sony Mobile Discovery"
+	depends on ARCH_SONY_NILE
+	help
+	  Support for the SONY Mobile Discovery device
+	  which is based on SONY Nile platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_VOYAGER
+	bool "Sony Mobile Voyager"
+	depends on ARCH_SONY_NILE
+	help
+	  Support for the SONY Mobile Voyager device
+	  which is based on SONY Nile platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config ARCH_SONY_GANGES
+	bool "Sony Mobile Ganges platform"
+	depends on ARCH_SDM630 || ARCH_SDM660
+	help
+	  Support for the SONY Mobile Ganges platform
+	  which is based on QCOM SDM630 chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_KIRIN
+	bool "Sony Mobile Kirin"
+	depends on ARCH_SONY_GANGES && ARCH_SDM630
+	help
+	  Support for the SONY Mobile Kirin device
+	  which is based on SONY Ganges platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_MERMAID
+	bool "Sony Mobile Mermaid"
+	depends on ARCH_SONY_GANGES && ARCH_SDM660
+	help
+	  Support for the SONY Mobile Mermaid device
+	  which is based on SONY Ganges platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config ARCH_SONY_TAMA
+	bool "Sony Mobile Tama platform"
+	depends on ARCH_SDM845
+	help
+	  Support for the SONY Mobile Tama platform
+	  which is based on QCOM SDM845 chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_AKARI
+	bool "Sony Mobile Akari"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the SONY Mobile Akari device
+	  which is based on SONY Tama platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_AKATSUKI
+	bool "Sony Mobile Akatsuki"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the SONY Mobile Akatsuki device
+	  which is based on SONY Tama platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_APOLLO
+	bool "Sony Mobile Apollo"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the SONY Mobile Apollo device
+	  which is based on SONY Tama platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config ARCH_SONY_KUMANO
+	bool "Sony Mobile Kumano platform"
+	depends on ARCH_SM8150
+	help
+	  Support for the SONY Mobile Kumano platform
+	  which is based on QCOM SM8150 chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_GRIFFIN
+	bool "Sony Mobile Griffin"
+	depends on ARCH_SONY_KUMANO
+	help
+	  Support for the SONY Mobile Griffin device
+	  which is based on SONY Kumano platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_BAHAMUT
+	bool "Sony Mobile Bahamut"
+	depends on ARCH_SONY_KUMANO
+	help
+	  Support for the SONY Mobile Bahamut device
+	  which is based on SONY Kumano platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config ARCH_SONY_SEINE
+	bool "Sony Mobile Seine platform"
+	depends on ARCH_TRINKET
+	help
+	  Support for the SONY Mobile Seine platform
+	  which is based on QCOM TRINKET chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_PDX201
+	bool "Sony Mobile PDX-201"
+	depends on ARCH_SONY_SEINE
+	help
+	Support for the SONY Mobile PDX-201 device
+	which is based on SONY Seine platform.
+	If you enable this config,
+	please use SONY Mobile device tree.
+
+config ARCH_SONY_EDO
+	bool "Sony Mobile Edo platform"
+	depends on ARCH_KONA
+	help
+	  Support for the SONY Mobile Edo platform
+	  which is based on QCOM KONA chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_PDX203
+	bool "Sony Mobile PDX-203"
+	depends on ARCH_SONY_EDO
+	help
+	  Support for the SONY Mobile PDX-203 device
+	  which is based on SONY Edo platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_PDX206
+	bool "Sony Mobile PDX-206"
+	depends on ARCH_SONY_EDO
+	help
+	  Support for the SONY Mobile PDX-206 device
+	  which is based on SONY Edo platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config ARCH_SONY_LENA
+	bool "Sony Mobile Lena platform"
+	depends on ARCH_LITO
+	help
+	  Support for the SONY Mobile Lena platform
+	  which is based on QCOM LITO chipset.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_PDX213
+	bool "Sony Mobile PDX213"
+	depends on ARCH_SONY_LENA
+	help
+	  Support for the SONY Mobile PDX213 device
+	  which is based on SONY Lena platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
 
 endmenu

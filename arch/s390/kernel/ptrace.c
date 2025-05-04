@@ -414,7 +414,6 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		save_fpu_regs();
 		if ((unsigned int) data != 0 ||
 		    test_fp_ctl(data >> (BITS_PER_LONG - 32)))
 			return -EINVAL;
@@ -504,7 +503,9 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		return put_user(child->thread.last_break, (unsigned long __user *)data);
+		put_user(child->thread.last_break,
+			 (unsigned long __user *) data);
+		return 0;
 	case PTRACE_ENABLE_TE:
 		if (!MACHINE_HAS_TE)
 			return -EIO;
@@ -775,7 +776,6 @@ static int __poke_user_compat(struct task_struct *child,
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
-		save_fpu_regs();
 		if (test_fp_ctl(tmp))
 			return -EINVAL;
 		child->thread.fpu.fpc = data;
@@ -857,7 +857,9 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		return put_user(child->thread.last_break, (unsigned int __user *)data);
+		put_user(child->thread.last_break,
+			 (unsigned int __user *) data);
+		return 0;
 	}
 	return compat_ptrace_request(child, request, addr, data);
 }
@@ -1004,7 +1006,9 @@ static int s390_fpregs_set(struct task_struct *target,
 	int rc = 0;
 	freg_t fprs[__NUM_FPRS];
 
-	save_fpu_regs();
+	if (target == current)
+		save_fpu_regs();
+
 	if (MACHINE_HAS_VX)
 		convert_vx_to_fp(fprs, target->thread.fpu.vxrs);
 	else

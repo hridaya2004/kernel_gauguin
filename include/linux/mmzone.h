@@ -18,7 +18,6 @@
 #include <linux/pageblock-flags.h>
 #include <linux/page-flags-layout.h>
 #include <linux/atomic.h>
-#include <linux/android_kabi.h>
 #include <asm/page.h>
 
 /* Free memory management - zoned buddy allocator.  */
@@ -193,7 +192,6 @@ enum node_stat_item {
 	NR_UNRECLAIMABLE_PAGES,
 	NR_ION_HEAP,
 	NR_ION_HEAP_POOL,
-	NR_GPU_HEAP,
 	NR_VM_NODE_STAT_ITEMS
 };
 
@@ -527,11 +525,6 @@ struct zone {
 	/* Zone statistics */
 	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
 	atomic_long_t		vm_numa_stat[NR_VM_NUMA_STAT_ITEMS];
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } ____cacheline_internodealigned_in_smp;
 
 enum pgdat_flags {
@@ -783,6 +776,13 @@ static inline bool pgdat_is_empty(pg_data_t *pgdat)
 #include <linux/memory_hotplug.h>
 
 void build_all_zonelists(pg_data_t *pgdat);
+#ifdef CONFIG_ANDROID_LOW_MEMORY_KILLER_CONSIDER_SWAP
+void _wake_all_kswapds(unsigned int order,
+			     gfp_t gfp_mask,
+			     struct zonelist *zonelist,
+			     enum zone_type high_zoneidx,
+			     struct zone *preferred_zone);
+#endif
 void wakeup_kswapd(struct zone *zone, gfp_t gfp_mask, int order,
 		   enum zone_type classzone_idx);
 bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,

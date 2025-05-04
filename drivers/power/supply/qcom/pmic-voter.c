@@ -1,7 +1,11 @@
+/*
+ * NOTE: This file has been modified by Sony Mobile Communications Inc.
+ * Modifications are Copyright (c) 2018 Sony Mobile Communications Inc,
+ * and licensed under the license of the file.
+ */
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2017, 2019 The Linux Foundation. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
  */
 
 #include <linux/debugfs.h>
@@ -107,13 +111,6 @@ static void vote_min(struct votable *votable, int client_id,
 			*eff_id = i;
 		}
 	}
-
-	if (strcmp(votable->name, "QG_WS") != 0) {
-		if(votable->votes[i].enabled)
-			pr_debug("%s: val: %d\n", votable->client_strs[i],
-						votable->votes[i].value);
-	}
-
 	if (*eff_id == -EINVAL)
 		*eff_res = -EINVAL;
 }
@@ -169,6 +166,14 @@ static int get_client_id(struct votable *votable, const char *client_str)
 			return i;
 		}
 	}
+#if defined(CONFIG_SOMC_CHARGER_EXTENSION)
+	pr_err("===========================================================\n");
+	pr_err("[PMIC-VOTER] %s: Couldn't regist new client:%s due to full clients!! \n",
+						votable->name, client_str);
+	for (i = 0; i < votable->num_clients; i++)
+		pr_err("client[%d]=%s\n", i, votable->client_strs[i]);
+	pr_err("===========================================================\n");
+#endif
 	return -EINVAL;
 }
 
@@ -488,14 +493,12 @@ int vote(struct votable *votable, const char *client_str, bool enabled, int val)
 	 */
 	if (!votable->voted_on
 			|| (effective_result != votable->effective_result)) {
-		if (strcmp(votable->name, "QG_WS") != 0) {
-			pr_debug("%s: effective vote is now %d voted by %s,%d\n",
-				votable->name, effective_result,
-				get_client_str(votable, effective_id),
-				effective_id, votable->effective_result);
-		}
 		votable->effective_client_id = effective_id;
 		votable->effective_result = effective_result;
+		pr_debug("%s: effective vote is now %d voted by %s,%d\n",
+			votable->name, effective_result,
+			get_client_str(votable, effective_id),
+			effective_id);
 		if (votable->callback && !votable->force_active
 				&& (votable->override_result == -EINVAL))
 			rc = votable->callback(votable, votable->data,
@@ -840,3 +843,66 @@ void destroy_votable(struct votable *votable)
 	kfree(votable->name);
 	kfree(votable);
 }
+#if defined(CONFIG_SOMC_CHARGER_EXTENSION)
+
+ssize_t somc_output_voter_param(struct votable *votable,
+						char *buf, size_t size)
+{
+	int i;
+	int stored_size = 0;
+	char *print_format;
+
+	memset(buf, '\0', size);
+	size--;
+	if (votable->type == VOTE_SET_ANY) {
+		for (i = 0; i < votable->num_clients
+					&& votable->client_strs[i]; i++) {
+			if (!votable->votes[i].enabled)
+				continue;
+
+			if (stored_size == 0)
+				print_format = "%s";
+			else
+				print_format = "; %s";
+			stored_size += scnprintf(buf + stored_size,
+					size - stored_size, print_format,
+					votable->client_strs[i]);
+			if (stored_size >= size)
+				break;
+		}
+	} else {
+		for (i = 0; i < votable->num_clients
+					&& votable->client_strs[i]; i++) {
+			if (!votable->votes[i].enabled)
+				continue;
+
+			if (stored_size == 0)
+				print_format = "%s:%d";
+			else
+				print_format = "; %s:%d";
+			stored_size += scnprintf(buf + stored_size,
+					size - stored_size, print_format,
+					votable->client_strs[i],
+					get_client_vote(votable,
+					votable->client_strs[i]));
+			if (stored_size >= size)
+				break;
+		}
+	}
+	if (stored_size < size)
+		stored_size += scnprintf(buf + stored_size,
+						size - stored_size, "\n");
+	return stored_size;
+}
+
+int somc_get_vote_clients(struct votable *votable, char *clients[])
+{
+	int i;
+	int num_clients = 0;
+	for (i = 0; i < votable->num_clients; i++) {
+		if (votable->client_strs[i])
+			clients[num_clients++] = votable->client_strs[i];
+	}
+	return num_clients;
+}
+#endif

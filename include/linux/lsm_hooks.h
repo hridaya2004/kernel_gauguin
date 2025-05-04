@@ -466,12 +466,6 @@
  *	simple integer value.  When @arg represents a user space pointer, it
  *	should never be used by the security module.
  *	Return 0 if permission is granted.
- * @file_ioctl_compat:
- *	@file contains the file structure.
- *	@cmd contains the operation to perform.
- *	@arg contains the operational arguments.
- *	Check permission for a compat ioctl operation on @file.
- *	Return 0 if permission is granted.
  * @mmap_addr :
  *	Check permissions for a mmap operation at @addr.
  *	@addr contains virtual address that will be used for the operation.
@@ -1470,8 +1464,10 @@ union security_list_options {
 	int (*sb_alloc_security)(struct super_block *sb);
 	void (*sb_free_security)(struct super_block *sb);
 	int (*sb_copy_data)(char *orig, char *copy);
-	int (*sb_remount)(struct super_block *sb, void *data);
-	int (*sb_kern_mount)(struct super_block *sb, int flags, void *data);
+	int (*sb_remount)(struct super_block *sb,
+			  struct security_mnt_opts *opts);
+	int (*sb_kern_mount)(struct super_block *sb, int flags,
+			     struct security_mnt_opts *opts);
 	int (*sb_show_options)(struct seq_file *m, struct super_block *sb);
 	int (*sb_statfs)(struct dentry *dentry);
 	int (*sb_mount)(const char *dev_name, const struct path *path,
@@ -1568,8 +1564,6 @@ union security_list_options {
 	int (*file_alloc_security)(struct file *file);
 	void (*file_free_security)(struct file *file);
 	int (*file_ioctl)(struct file *file, unsigned int cmd,
-				unsigned long arg);
-	int (*file_ioctl_compat)(struct file *file, unsigned int cmd,
 				unsigned long arg);
 	int (*mmap_addr)(unsigned long addr);
 	int (*mmap_file)(struct file *file, unsigned long reqprot,
@@ -1877,7 +1871,6 @@ struct security_hook_heads {
 	struct hlist_head file_alloc_security;
 	struct hlist_head file_free_security;
 	struct hlist_head file_ioctl;
-	struct hlist_head file_ioctl_compat;
 	struct hlist_head mmap_addr;
 	struct hlist_head mmap_file;
 	struct hlist_head file_mprotect;

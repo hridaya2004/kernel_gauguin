@@ -241,7 +241,7 @@ static int blk_mq_register_hctx(struct blk_mq_hw_ctx *hctx)
 {
 	struct request_queue *q = hctx->queue;
 	struct blk_mq_ctx *ctx;
-	int i, j, ret;
+	int i, ret;
 
 	if (!hctx->nr_ctx)
 		return 0;
@@ -253,16 +253,9 @@ static int blk_mq_register_hctx(struct blk_mq_hw_ctx *hctx)
 	hctx_for_each_ctx(hctx, ctx, i) {
 		ret = kobject_add(&ctx->kobj, &hctx->kobj, "cpu%u", ctx->cpu);
 		if (ret)
-			goto out;
+			break;
 	}
 
-	return 0;
-out:
-	hctx_for_each_ctx(hctx, ctx, j) {
-		if (j < i)
-			kobject_del(&ctx->kobj);
-	}
-	kobject_del(&hctx->kobj);
 	return ret;
 }
 
@@ -271,7 +264,7 @@ void blk_mq_unregister_dev(struct device *dev, struct request_queue *q)
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
-	lockdep_assert_held(&q->sysfs_lock);
+	lockdep_assert_held(&q->sysfs_dir_lock);
 
 	queue_for_each_hw_ctx(q, hctx, i)
 		blk_mq_unregister_hctx(hctx);
@@ -319,7 +312,7 @@ int __blk_mq_register_dev(struct device *dev, struct request_queue *q)
 	int ret, i;
 
 	WARN_ON_ONCE(!q->kobj.parent);
-	lockdep_assert_held(&q->sysfs_lock);
+	lockdep_assert_held(&q->sysfs_dir_lock);
 
 	ret = kobject_add(&q->mq_kobj, kobject_get(&dev->kobj), "%s", "mq");
 	if (ret < 0)
@@ -365,7 +358,7 @@ void blk_mq_sysfs_unregister(struct request_queue *q)
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
-	mutex_lock(&q->sysfs_lock);
+	mutex_lock(&q->sysfs_dir_lock);
 	if (!q->mq_sysfs_init_done)
 		goto unlock;
 
@@ -373,7 +366,7 @@ void blk_mq_sysfs_unregister(struct request_queue *q)
 		blk_mq_unregister_hctx(hctx);
 
 unlock:
-	mutex_unlock(&q->sysfs_lock);
+	mutex_unlock(&q->sysfs_dir_lock);
 }
 
 int blk_mq_sysfs_register(struct request_queue *q)
@@ -381,7 +374,7 @@ int blk_mq_sysfs_register(struct request_queue *q)
 	struct blk_mq_hw_ctx *hctx;
 	int i, ret = 0;
 
-	mutex_lock(&q->sysfs_lock);
+	mutex_lock(&q->sysfs_dir_lock);
 	if (!q->mq_sysfs_init_done)
 		goto unlock;
 
@@ -392,7 +385,7 @@ int blk_mq_sysfs_register(struct request_queue *q)
 	}
 
 unlock:
-	mutex_unlock(&q->sysfs_lock);
+	mutex_unlock(&q->sysfs_dir_lock);
 
 	return ret;
 }

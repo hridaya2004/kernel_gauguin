@@ -1058,7 +1058,7 @@ void mhi_control_error(struct mhi_controller *mhi_cntrl)
 	/* copy subsystem failure reason string if supported */
 	if (sfr_info && sfr_info->buf_addr) {
 		memcpy(sfr_info->str, sfr_info->buf_addr, sfr_info->len);
-		MHI_CNTRL_ERR("mhi:%s sfr: %s\n", mhi_cntrl->name,
+		MHI_CNTRL_ERR("mhi:%s sfr: 0x%lx\n", mhi_cntrl->name,
 				sfr_info->buf_addr);
 	}
 
@@ -1512,15 +1512,6 @@ int mhi_pm_fast_resume(struct mhi_controller *mhi_cntrl, bool notify_client)
 	}
 
 	if (mhi_cntrl->rddm_supported) {
-
-		/* check EP is in proper state */
-		if (mhi_cntrl->link_status(mhi_cntrl, mhi_cntrl->priv_data)) {
-			MHI_ERR("Unable to access EP Config space\n");
-			write_unlock_irq(&mhi_cntrl->pm_lock);
-			tasklet_enable(&mhi_cntrl->mhi_event->task);
-			return -ETIMEDOUT;
-		}
-
 		if (mhi_get_exec_env(mhi_cntrl) == MHI_EE_RDDM &&
 		    !mhi_cntrl->power_down) {
 			mhi_cntrl->ee = MHI_EE_RDDM;

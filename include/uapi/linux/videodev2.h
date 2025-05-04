@@ -571,7 +571,6 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_NV12_UBWC        v4l2_fourcc('Q', '1', '2', '8')
 /* UBWC 10-bit Y/CbCr 4:2:0 */
 #define V4L2_PIX_FMT_NV12_TP10_UBWC   v4l2_fourcc('Q', '1', '2', 'A')
-
 #define V4L2_PIX_FMT_NV12_P010_UBWC   v4l2_fourcc('Q', '1', '2', 'B')
 
 /* two non contiguous planes - one Y, one Cr + Cb interleaved  */
@@ -717,6 +716,8 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_IPU3_SGBRG10	v4l2_fourcc('i', 'p', '3', 'g') /* IPU3 packed 10-bit GBRG bayer */
 #define V4L2_PIX_FMT_IPU3_SGRBG10	v4l2_fourcc('i', 'p', '3', 'G') /* IPU3 packed 10-bit GRBG bayer */
 #define V4L2_PIX_FMT_IPU3_SRGGB10	v4l2_fourcc('i', 'p', '3', 'r') /* IPU3 packed 10-bit RGGB bayer */
+#define V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS \
+	v4l2_fourcc('Q', 'P', '1', '0') /* Y/CbCr 4:2:0 P10 Venus*/
 
 #define V4L2_PIX_FMT_SDE_ABGR_8888 \
 	v4l2_fourcc('R', 'A', '2', '4') /* 32-bit ABGR 8:8:8:8 */
@@ -1096,22 +1097,6 @@ struct v4l2_buffer {
 #define V4L2_BUF_FLAG_READONLY		0x04000000
 #define V4L2_BUF_FLAG_PERF_MODE		0x20000000
 #define V4L2_BUF_FLAG_CVPMETADATA_SKIP		0x40000000
-
-#define V4L2_QCOM_BUF_FLAG_EOSEQ                0x00040000
-#define V4L2_QCOM_BUF_TIMESTAMP_INVALID         0x00080000
-#define V4L2_MSM_BUF_FLAG_MBAFF                 0x00000200
-#define V4L2_QCOM_BUF_FLAG_DECODEONLY           0x00200000
-#define V4L2_QCOM_BUF_DROP_FRAME                0x00800000
-#define V4L2_MSM_VIDC_BUF_START_CODE_NOT_FOUND  0x08000000
-#define V4L2_MSM_BUF_FLAG_YUV_601_709_CLAMP     0x10000000
-#define V4L2_MSM_BUF_FLAG_DEFER                 0x40000000
-#define V4L2_QCOM_BUF_FLAG_IDRFRAME             0x80000000
-#define V4L2_QCOM_BUF_END_OF_SUBFRAME   V4L2_BUF_FLAG_END_OF_SUBFRAME
-#define V4L2_QCOM_BUF_FLAG_CODECCONFIG  V4L2_BUF_FLAG_CODECCONFIG
-#define V4L2_QCOM_BUF_INPUT_UNSUPPORTED V4L2_BUF_INPUT_UNSUPPORTED
-#define V4L2_QCOM_BUF_FLAG_EOS	V4L2_BUF_FLAG_EOS
-#define V4L2_QCOM_BUF_FLAG_READONLY V4L2_BUF_FLAG_READONLY
-#define V4L2_QCOM_BUF_FLAG_PERF_MODE	V4L2_BUF_FLAG_PERF_MODE
 
 /**
  * struct v4l2_exportbuffer - export of video buffer as DMABUF file descriptor
@@ -1543,8 +1528,7 @@ struct v4l2_bt_timings {
 	((bt)->width + V4L2_DV_BT_BLANKING_WIDTH(bt))
 #define V4L2_DV_BT_BLANKING_HEIGHT(bt) \
 	((bt)->vfrontporch + (bt)->vsync + (bt)->vbackporch + \
-	 ((bt)->interlaced ? \
-	  ((bt)->il_vfrontporch + (bt)->il_vsync + (bt)->il_vbackporch) : 0))
+	 (bt)->il_vfrontporch + (bt)->il_vsync + (bt)->il_vbackporch)
 #define V4L2_DV_BT_FRAME_HEIGHT(bt) \
 	((bt)->height + V4L2_DV_BT_BLANKING_HEIGHT(bt))
 
@@ -1635,7 +1619,7 @@ struct v4l2_input {
 	__u8	     name[32];		/*  Label */
 	__u32	     type;		/*  Type of input */
 	__u32	     audioset;		/*  Associated audios (bitfield) */
-	__u32        tuner;             /*  Tuner index */
+	__u32        tuner;             /*  enum v4l2_tuner_type */
 	v4l2_std_id  std;
 	__u32	     status;
 	__u32	     capabilities;
@@ -2021,8 +2005,6 @@ struct v4l2_encoder_cmd {
 #define V4L2_DEC_CMD_RESUME      (3)
 #define V4L2_CMD_FLUSH      (4)
 #define V4L2_CMD_SESSION_CONTINUE (5)
-#define V4L2_DEC_QCOM_CMD_RECONFIG_HINT  (6)
-
 /* Flags for V4L2_DEC_CMD_START */
 #define V4L2_DEC_CMD_START_MUTE_AUDIO	(1 << 0)
 
@@ -2036,11 +2018,6 @@ struct v4l2_encoder_cmd {
 /* Flags for V4L2_CMD_FLUSH */
 #define V4L2_CMD_FLUSH_OUTPUT  (1 << 0)
 #define V4L2_CMD_FLUSH_CAPTURE (1 << 1)
-
-#define V4L2_QCOM_CMD_FLUSH	V4L2_CMD_FLUSH
-#define V4L2_QCOM_CMD_SESSION_CONTINUE	V4L2_CMD_SESSION_CONTINUE
-#define V4L2_QCOM_CMD_FLUSH_OUTPUT	V4L2_CMD_FLUSH_OUTPUT
-#define V4L2_QCOM_CMD_FLUSH_CAPTURE	V4L2_CMD_FLUSH_CAPTURE
 
 /* Play format requirements (returned by the driver): */
 
@@ -2320,23 +2297,12 @@ struct v4l2_streamparm {
 #define V4L2_EVENT_MOTION_DET			6
 #define V4L2_EVENT_PRIVATE_START		0x08000000
 
-#define V4L2_EVENT_BITDEPTH_FLAG	0x1
-#define V4L2_EVENT_PICSTRUCT_FLAG	0x2
-#define V4L2_EVENT_COLOUR_SPACE_FLAG	0x4
-
 #define V4L2_EVENT_MSM_VIDC_START	(V4L2_EVENT_PRIVATE_START + 0x00001000)
 #define V4L2_EVENT_MSM_VIDC_FLUSH_DONE	(V4L2_EVENT_MSM_VIDC_START + 1)
 #define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_CHANGED_SUFFICIENT	\
 		(V4L2_EVENT_MSM_VIDC_START + 2)
 #define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_CHANGED_INSUFFICIENT	\
 		(V4L2_EVENT_MSM_VIDC_START + 3)
-
-/*
- * Bitdepth changed insufficient is deprecated now, however retaining
- * to prevent changing the values of the other macros after bitdepth
- */
-#define V4L2_EVENT_MSM_VIDC_PORT_SETTINGS_BITDEPTH_CHANGED_INSUFFICIENT \
-		(V4L2_EVENT_MSM_VIDC_START + 4)
 
 #define V4L2_EVENT_MSM_VIDC_SYS_ERROR	(V4L2_EVENT_MSM_VIDC_START + 5)
 #define V4L2_EVENT_MSM_VIDC_RELEASE_BUFFER_REFERENCE \

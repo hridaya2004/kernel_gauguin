@@ -254,7 +254,7 @@ struct msm_mctl_post_proc_cmd {
 #define MSM_CAMERA_STROBE_FLASH_NONE 0
 #define MSM_CAMERA_STROBE_FLASH_XENON 1
 
-#define MSM_MAX_CAMERA_SENSORS  5
+#define MSM_MAX_CAMERA_SENSORS  6
 #define MAX_SENSOR_NAME 32
 #define MAX_CAM_NAME_SIZE 32
 #define MAX_ACT_MOD_NAME_SIZE 32
@@ -1693,6 +1693,7 @@ enum actuator_type {
 	ACTUATOR_PIEZO,
 	ACTUATOR_HVCM,
 	ACTUATOR_BIVCM,
+	ACTUATOR_VCM2,
 };
 
 enum msm_actuator_data_type {

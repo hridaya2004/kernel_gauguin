@@ -285,15 +285,9 @@ static int sdio_read_cis(struct mmc_card *card, struct sdio_func *func)
 			break;
 
 		/* null entries have no link field or data */
-		if (tpl_code == 0x00) {
-			if (card->cis.vendor == 0x70 &&
-				(card->cis.device == 0x2460 ||
-				card->cis.device == 0x0460 ||
-				card->cis.device == 0x23F1 ||
-				card->cis.device == 0x23F0))
-				break;
+		if (tpl_code == 0x00)
 			continue;
-		}
+
 		ret = mmc_io_rw_direct(card, 0, 0, ptr++, 0, &tpl_link);
 		if (ret)
 			break;
@@ -395,6 +389,12 @@ int sdio_read_func_cis(struct sdio_func *func)
 		return ret;
 
 	/*
+	 * Since we've linked to tuples in the card structure,
+	 * we must make sure we have a reference to it.
+	 */
+	get_device(&func->card->dev);
+
+	/*
 	 * Vendor/device id is optional for function CIS, so
 	 * copy it from the card structure as needed.
 	 */
@@ -419,5 +419,11 @@ void sdio_free_func_cis(struct sdio_func *func)
 	}
 
 	func->tuples = NULL;
+
+	/*
+	 * We have now removed the link to the tuples in the
+	 * card structure, so remove the reference.
+	 */
+	put_device(&func->card->dev);
 }
 

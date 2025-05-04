@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -92,7 +92,7 @@ static void arm_smmu_debug_dump_tbu_qns4_testbus(struct device *dev,
 		reg = (reg & ~GENMASK(4, 0)) | i << 0;
 		arm_smmu_debug_tbu_testbus_select(tbu_base, tcu_base,
 				testbus_version, WRITE, reg);
-		dev_info(dev, "testbus_sel: 0x%lx Index: %d val: 0x%llx\n",
+		dev_info(dev, "testbus_sel: 0x%x Index: %d val: 0x%x\n",
 			arm_smmu_debug_tbu_testbus_select(tbu_base, tcu_base,
 				testbus_version, READ, 0), i,
 			arm_smmu_debug_tbu_testbus_output(tbu_base,

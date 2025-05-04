@@ -3,6 +3,7 @@
  *
  * Copyright 2007, 2008 Wolfson Microelectronics PLC.
  * Copyright 2008 SlimLogic Ltd.
+ * Copyright (C) 2013 Sony Mobile Communications AB.
  *
  * Author: Liam Girdwood <lrg@slimlogic.co.uk>
  *
@@ -1260,13 +1261,7 @@ static int set_machine_constraints(struct regulator_dev *rdev)
 		if (rdev->supply_name && !rdev->supply)
 			return -EPROBE_DEFER;
 
-		/* If supplying regulator has already been enabled,
-		 * it's not intended to have use_count increment
-		 * when rdev is only boot-on.
-		 */
-		if (rdev->supply &&
-		    (rdev->constraints->always_on ||
-		     !regulator_is_enabled(rdev->supply))) {
+		if (rdev->supply) {
 			ret = regulator_enable(rdev->supply);
 			if (ret < 0) {
 				_regulator_put(rdev->supply);
@@ -1310,7 +1305,6 @@ static int set_supply(struct regulator_dev *rdev,
 
 	rdev->supply = create_regulator(supply_rdev, &rdev->dev, "SUPPLY");
 	if (rdev->supply == NULL) {
-		module_put(supply_rdev->owner);
 		err = -ENOMEM;
 		return err;
 	}
@@ -1611,7 +1605,6 @@ static struct regulator_dev *regulator_dev_lookup(struct device *dev,
 		node = of_get_regulator(dev, supply);
 		if (node) {
 			r = of_find_regulator_by_node(node);
-			of_node_put(node);
 			if (r)
 				return r;
 
@@ -2779,7 +2772,6 @@ struct regmap *regulator_get_regmap(struct regulator *regulator)
 
 	return map ? map : ERR_PTR(-EOPNOTSUPP);
 }
-EXPORT_SYMBOL_GPL(regulator_get_regmap);
 
 /**
  * regulator_get_hardware_vsel_register - get the HW voltage selector register
@@ -3872,6 +3864,33 @@ int regulator_allow_bypass(struct regulator *regulator, bool enable)
 EXPORT_SYMBOL_GPL(regulator_allow_bypass);
 
 /**
+ * regulator_register_ocp_notification - register ocp notification
+ * @regulator: regulator source
+ * @notification: pointer of client ocp_notification
+ *
+ */
+int regulator_register_ocp_notification(struct regulator *regulator,
+			struct regulator_ocp_notification *notification)
+{
+	struct regulator_dev *rdev = regulator->rdev;
+	int ret;
+
+	mutex_lock(&rdev->mutex);
+
+	/* sanity check */
+	if (!rdev->desc->ops->register_ocp_notification) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = rdev->desc->ops->register_ocp_notification(rdev, notification);
+out:
+	mutex_unlock(&rdev->mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regulator_register_ocp_notification);
+
+/**
  * regulator_register_notifier - register regulator event notifier
  * @regulator: regulator source
  * @nb: notifier block
@@ -4547,7 +4566,7 @@ static void rdev_init_debugfs(struct regulator_dev *rdev)
 	}
 
 	rdev->debugfs = debugfs_create_dir(rname, debugfs_root);
-	if (IS_ERR(rdev->debugfs)) {
+	if (!rdev->debugfs) {
 		rdev_warn(rdev, "Failed to create debugfs directory\n");
 		return;
 	}
@@ -5344,7 +5363,7 @@ static int __init regulator_init(void)
 	ret = class_register(&regulator_class);
 
 	debugfs_root = debugfs_create_dir("regulator", NULL);
-	if (IS_ERR(debugfs_root))
+	if (!debugfs_root)
 		pr_warn("regulator: Failed to create debugfs directory\n");
 
 	debugfs_create_file("supply_map", 0444, debugfs_root, NULL,

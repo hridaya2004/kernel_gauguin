@@ -792,7 +792,6 @@ static void __init pSeries_setup_arch(void)
 	}
 
 	ppc_md.pcibios_root_bridge_prepare = pseries_root_bridge_prepare;
-	pseries_rng_init();
 }
 
 static void pseries_panic(char *str)

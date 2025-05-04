@@ -64,6 +64,8 @@ obj-$(CONFIG_MISC_RTSX)		+= cardreader/
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_MEMORY_STATE_TIME)	+= memory_state_time.o
 obj-$(CONFIG_QPNP_MISC)		+= qpnp-misc.o
+obj-$(CONFIG_LDO_VIBRATOR)	+= ldo_vibrator.o
+obj-$(CONFIG_SENSORS_TCS3490)	+= tcs3490.o
 
 obj-$(CONFIG_OKL4_USER_VIRQ)	+= okl4-virq.o
 obj-$(CONFIG_OKL4_RINGBUF)	+= okl4-ringbuf.o
@@ -76,5 +78,7 @@ obj-$(CONFIG_WIGIG_SENSING_SPI)	+= wigig_sensing.o
 obj-$(CONFIG_QTI_MAXIM_FAN_CONTROLLER) += max31760.o
 obj-$(CONFIG_QTI_XR_SMRTVWR_MISC) += qxr-stdalonevwr.o
 obj-$(CONFIG_FPR_FPC)		+= fpr_FingerprintCard/
-obj-y                           += qrc/
-obj-$(CONFIG_KINECTICS_XR_NORDIC) += kxrctrl/
+
+obj-$(CONFIG_NFC_PN553_DEVICES)	+= pn553/
+obj-$(CONFIG_SONY_EXT_UIM_CTRL)  += sony_ext_uim_ctrl.o
+obj-$(CONFIG_POWERKEY_FORCECRASH)	+= powerkey_forcecrash.o

@@ -811,14 +811,6 @@ void __init fpu__init_system_xstate(void)
 	fpu__init_prepare_fx_sw_frame();
 	setup_init_fpu_buf();
 	setup_xstate_comp();
-
-	/*
-	 * CPU capabilities initialization runs before FPU init. So
-	 * X86_FEATURE_OSXSAVE is not set. Now that XSAVE is completely
-	 * functional, set the feature bit so depending code works.
-	 */
-	setup_force_cpu_cap(X86_FEATURE_OSXSAVE);
-
 	print_xstate_offset_size();
 
 	pr_info("x86/fpu: Enabled xstate features 0x%llx, context size is %d bytes, using '%s' format.\n",
@@ -1074,7 +1066,7 @@ int copy_xstate_to_kernel(void *kbuf, struct xregs_state *xsave, unsigned int of
 		copy_part(offsetof(struct fxregs_state, st_space), 128,
 			  &xsave->i387.st_space, &kbuf, &offset_start, &count);
 	if (header.xfeatures & XFEATURE_MASK_SSE)
-		copy_part(xstate_offsets[XFEATURE_SSE], 256,
+		copy_part(xstate_offsets[XFEATURE_MASK_SSE], 256,
 			  &xsave->i387.xmm_space, &kbuf, &offset_start, &count);
 	/*
 	 * Fill xsave->i387.sw_reserved value for ptrace frame:

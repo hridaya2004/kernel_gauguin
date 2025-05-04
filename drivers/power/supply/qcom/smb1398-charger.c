@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (C) 2021 XiaoMi, Inc.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2020 The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "SMB1398: %s: " fmt, __func__
@@ -130,7 +128,6 @@
 #define SMB_EN_POS_TRIGGER		BIT(0)
 
 #define PERPH0_DIV2_SLAVE		0x2652
-#define CFG_EN_SLAVE_OWN_FREQ		BIT(1)
 #define CFG_DIV2_SYNC_CLK_PHASE_90		BIT(0)
 
 #define DIV2_LCM_CFG_REG		0x2653
@@ -149,10 +146,6 @@
 #define WIN_OV_300_MV			1
 #define WIN_OV_400_MV			2
 #define WIN_OV_500_MV			3
-
-#define PERPH0_OVLO_REF_REG			0x265B
-#define SMB1394_INPUT_OVLO_CONF_MASK	GENMASK(2, 0)
-#define SMB1394_INPUT_OVLO_13P04V	0x5
 
 #define DIV2_MODE_CFG_REG		0x265C
 
@@ -183,17 +176,10 @@
 
 #define PERPH0_CFG_SDCDC_REG		0x267A
 #define EN_WIN_UV_BIT			BIT(7)
-#define EN_WIN_OV_RISE_DEB_BIT		BIT(6)
-
-#define PERPH0_SOVP_CFG0_REG		0x2680
-#define CFG_OVP_VSNS_THRESHOLD		BIT(4)
-#define CFG_OVP_IGNORE_UVLO		BIT(5)
 
 #define PERPH0_SSUPPLY_CFG0_REG		0x2682
 #define EN_HV_OV_OPTION2_BIT		BIT(7)
 #define EN_MV_OV_OPTION2_BIT		BIT(5)
-#define CFG_CMP_VOUT_VS_4V_REF_MASK	GENMASK(2, 1)
-#define CMP_VOUT_VS_4V_REF_3P2V		0x3	/* Value for SMB1394 only */
 
 #define SSUPLY_TEMP_CTRL_REG		0x2683
 #define SEL_OUT_TEMP_MAX_MASK		GENMASK(7, 5)
@@ -229,12 +215,10 @@
 #define CC_MODE_VOTER			"CC_MODE_VOTER"
 #define MAIN_DISABLE_VOTER		"MAIN_DISABLE_VOTER"
 #define TAPER_MAIN_ICL_LIMIT_VOTER	"TAPER_MAIN_ICL_LIMIT_VOTER"
-#define SIX_PIN_VFLOAT_VOTER		"SIX_PIN_VFLOAT_VOTER"
 
 /* Constant definitions */
-/* Need to define max ILIM for smb1398 */
 #define DIV2_MAX_ILIM_UA		5000000
-#define DIV2_MAX_ILIM_DUAL_CP_UA	6400000
+#define DIV2_MAX_ILIM_DUAL_CP_UA	10000000
 #define DIV2_ILIM_CFG_PCT		105
 
 #define TAPER_STEPPER_UA_DEFAULT	100000
@@ -249,12 +233,6 @@
 #define DIV2_CP_MASTER			0
 #define DIV2_CP_SLAVE			1
 #define COMBO_PRE_REGULATOR		2
-#define SMB1394_DIV2_CP_PRY		3
-#define SMB1394_DIV2_CP_SECY		4
-#define SMB1398_MAX_IIN			5000
-
-#define IS_SMB1394(role) \
-	(role == SMB1394_DIV2_CP_PRY || role == SMB1394_DIV2_CP_SECY)
 
 enum isns_mode {
 	ISNS_MODE_OFF = 0,
@@ -369,7 +347,6 @@ struct smb1398_chip {
 	bool			slave_en;
 	bool			in_suspend;
 	bool			disabled;
-	bool			usb_present;
 };
 
 static int smb1398_read(struct smb1398_chip *chip, u16 reg, u8 *val)
@@ -444,9 +421,6 @@ static int smb1398_set_iin_ma(struct smb1398_chip *chip, int iin_ma)
 {
 	int rc = 0;
 	u8 val;
-
-	if (iin_ma > SMB1398_MAX_IIN)
-		iin_ma = SMB1398_MAX_IIN;
 
 	val = iin_ma / IIN_STEP_MA;
 	rc = smb1398_masked_write(chip, IIN_SS_DAC_TARGET_REG,
@@ -905,23 +879,6 @@ static void smb1398_toggle_switcher(struct smb1398_chip *chip)
 		dev_err(chip->dev, "Couldn't disable EN_ILIM_DET, rc=%d\n", rc);
 }
 
-static int smb1398_toggle_uvlo(struct smb1398_chip *chip)
-{
-	int rc;
-
-	rc = smb1398_masked_write(chip, PERPH0_SOVP_CFG0_REG,
-				CFG_OVP_IGNORE_UVLO, CFG_OVP_IGNORE_UVLO);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't write IGNORE_UVLO rc=%d\n", rc);
-
-	rc = smb1398_masked_write(chip, PERPH0_SOVP_CFG0_REG,
-				CFG_OVP_IGNORE_UVLO, 0);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't write IGNORE_UVLO, rc=%d\n", rc);
-
-	return rc;
-}
-
 static enum power_supply_property div2_cp_master_props[] = {
 	POWER_SUPPLY_PROP_CP_STATUS1,
 	POWER_SUPPLY_PROP_CP_STATUS2,
@@ -995,19 +952,6 @@ static int smb1398_div2_cp_get_min_icl(struct smb1398_chip *chip)
 	}
 
 	return chip->div2_cp_min_ilim_ua;
-}
-
-static char *div2_cp_get_model_name(struct smb1398_chip *chip)
-{
-	if (IS_SMB1394(chip->div2_cp_role))
-		return "SMB1394";
-
-	if (chip->pmic_rev_id->rev4 > 2)
-		return "SMB1398_V3";
-	else if (chip->pmic_rev_id->rev4 == 2)
-		return "SMB1398_V2";
-	else
-		return "SMB1398_V1";
 }
 
 static int div2_cp_master_get_prop(struct power_supply *psy,
@@ -1100,7 +1044,8 @@ static int div2_cp_master_get_prop(struct power_supply *psy,
 		val->intval = chip->pmic_rev_id->rev4;
 		break;
 	case POWER_SUPPLY_PROP_MODEL_NAME:
-		val->strval = div2_cp_get_model_name(chip);
+		val->strval = (chip->pmic_rev_id->rev4 > 1) ? "SMB1398_V2" :
+								"SMB1398_V1";
 		break;
 	case POWER_SUPPLY_PROP_PARALLEL_MODE:
 		val->intval = chip->pl_input_mode;
@@ -1414,7 +1359,7 @@ static int smb1398_div2_cp_ilim_vote_cb(struct votable *votable,
 	max_ilim_ua = is_cps_available(chip) ?
 		DIV2_MAX_ILIM_DUAL_CP_UA : DIV2_MAX_ILIM_UA;
 	ilim_ua = min(ilim_ua, max_ilim_ua);
-	if (ilim_ua < chip->div2_cp_min_ilim_ua) {
+	if (ilim_ua < min_ilim_ua) {
 		dev_dbg(chip->dev, "ilim %duA is too low to config CP charging\n",
 				ilim_ua);
 		vote(chip->div2_cp_disable_votable, ILIM_VOTER, true, 0);
@@ -1712,24 +1657,6 @@ static void smb1398_status_change_work(struct work_struct *work)
 		vote(chip->div2_cp_disable_votable, CUTOFF_SOC_VOTER, false, 0);
 
 	rc = power_supply_get_property(chip->usb_psy,
-			POWER_SUPPLY_PROP_PRESENT, &pval);
-	if (rc < 0) {
-		dev_err(chip->dev,
-			"Couldn't get USB PRESENT status, rc=%d\n", rc);
-		goto out;
-	}
-
-	if (chip->usb_present != !!pval.intval) {
-		chip->usb_present = !!pval.intval;
-		if (!chip->usb_present) /* USB has been removed */
-			smb1398_toggle_uvlo(chip);
-		pval.intval = 1;
-		if (is_cps_available(chip))
-			power_supply_set_property(chip->div2_cp_slave_psy,
-				POWER_SUPPLY_PROP_CP_TOGGLE_SWITCHER, &pval);
-	}
-
-	rc = power_supply_get_property(chip->usb_psy,
 			POWER_SUPPLY_PROP_SMB_EN_MODE, &pval);
 	if (rc < 0) {
 		dev_err(chip->dev, "Couldn't get SMB_EN_MODE, rc=%d\n", rc);
@@ -1881,12 +1808,6 @@ static void smb1398_taper_work(struct work_struct *work)
 	min_ilim_ua = smb1398_div2_cp_get_min_icl(chip);
 
 	chip->taper_entry_fv = get_effective_result(chip->fv_votable);
-
-	if ((strcmp(get_effective_client(chip->fv_votable), "SIX_PIN_VFLOAT_VOTER") == 0)) {
-		dev_err(chip->dev, "get CHARGE_FV=%d uv\n", chip->taper_entry_fv);
-		goto out;
-	}
-
 	while (true) {
 		rc = power_supply_get_property(chip->batt_psy,
 				POWER_SUPPLY_PROP_CHARGE_TYPE, &pval);
@@ -1970,7 +1891,7 @@ out:
 	chip->taper_work_running = false;
 }
 
-static int _smb1398_update_ovp(struct smb1398_chip *chip)
+static int smb1398_update_ovp(struct smb1398_chip *chip)
 {
 	int rc = 0;
 	u8 reg = 0;
@@ -2004,43 +1925,7 @@ static int _smb1398_update_ovp(struct smb1398_chip *chip)
 		return rc;
 	}
 
-	return rc;
-}
-
-static int _smb1394_update_ovp(struct smb1398_chip *chip)
-{
-	int rc = 0;
-
-	rc = smb1398_masked_write(chip, PERPH0_SOVP_CFG0_REG,
-			CFG_OVP_VSNS_THRESHOLD, CFG_OVP_VSNS_THRESHOLD);
-	if (rc < 0) {
-		dev_err(chip->dev, "Couldn't set PERPH0_SOVP_CFG0_REG rc=%d\n",
-				rc);
-		return rc;
-	}
-
-	rc = smb1398_masked_write(chip, PERPH0_OVLO_REF_REG,
-			SMB1394_INPUT_OVLO_CONF_MASK,
-			SMB1394_INPUT_OVLO_13P04V);
-	if (rc < 0) {
-		dev_err(chip->dev, "Couldn't set PERPH0_OVLO_REF rc=%d\n", rc);
-		return rc;
-	}
-
-	rc = smb1398_masked_write(chip, PERPH0_CFG_SDCDC_REG,
-		EN_WIN_OV_RISE_DEB_BIT, 0);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't set PERPH0_CFG_SDCDC_REG rc=%d\n",
-			rc);
-	return rc;
-}
-
-static int smb1398_update_ovp(struct smb1398_chip *chip)
-{
-	if (IS_SMB1394(chip->div2_cp_role))
-		return _smb1394_update_ovp(chip);
-
-	return _smb1398_update_ovp(chip);
+	return 0;
 }
 
 static int smb1398_div2_cp_hw_init(struct smb1398_chip *chip)
@@ -2117,18 +2002,6 @@ static int smb1398_div2_cp_hw_init(struct smb1398_chip *chip)
 		return rc;
 	}
 
-	rc = smb1398_masked_write(chip, NOLOCK_SPARE_REG, DIV2_WIN_UV_SEL_BIT, 0x00);
-	if (rc < 0)
-		dev_err(chip->dev, "set NOLOCK_SPARE_REG failed, rc=%d\n", rc);
-
-	/* Do not disable FP_FET during IREV conditions */
-	rc = smb1398_masked_write(chip, MISC_CFG0_REG, CFG_DIS_FPF_IREV_BIT, 0);
-	if (rc < 0) {
-		dev_err(chip->dev, "Couldn't set CFG_DIS_FPF_IREV_BIT, rc=%d\n",
-				rc);
-		return rc;
-	}
-
 	/* switcher enable controlled by register */
 	rc = smb1398_masked_write(chip, MISC_CFG0_REG,
 			SW_EN_SWITCHER_BIT, SW_EN_SWITCHER_BIT);
@@ -2136,17 +2009,6 @@ static int smb1398_div2_cp_hw_init(struct smb1398_chip *chip)
 		dev_err(chip->dev, "Couldn't set CFG_EN_SOURCE, rc=%d\n",
 				rc);
 		return rc;
-	}
-
-	if (IS_SMB1394(chip->div2_cp_role)) {
-		rc = smb1398_masked_write(chip, PERPH0_SSUPPLY_CFG0_REG,
-				CFG_CMP_VOUT_VS_4V_REF_MASK,
-				CMP_VOUT_VS_4V_REF_3P2V);
-		if (rc < 0) {
-			dev_err(chip->dev, "Couldn't set PERPH0_SSUPPLY_CFG0_REG, rc=%d\n",
-					rc);
-			return rc;
-		}
 	}
 
 	return rc;
@@ -2304,7 +2166,6 @@ static enum power_supply_property div2_cp_slave_props[] = {
 	POWER_SUPPLY_PROP_CP_ENABLE,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_CAPABILITY,
-	POWER_SUPPLY_PROP_CP_TOGGLE_SWITCHER,
 };
 
 static int div2_cp_slave_get_prop(struct power_supply *psy,
@@ -2327,9 +2188,6 @@ static int div2_cp_slave_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_CAPABILITY:
 		pval->intval = (int)chip->current_capability;
-		break;
-	case POWER_SUPPLY_PROP_CP_TOGGLE_SWITCHER:
-		pval->intval = 0;
 		break;
 	default:
 		dev_err(chip->dev, "read div2_cp_slave property %d is not supported\n",
@@ -2362,10 +2220,6 @@ static int div2_cp_slave_set_prop(struct power_supply *psy,
 		if (rc < 0)
 			return rc;
 		chip->current_capability = mode;
-		break;
-	case POWER_SUPPLY_PROP_CP_TOGGLE_SWITCHER:
-		/* use this case to toggle UVLO */
-		rc = smb1398_toggle_uvlo(chip);
 		break;
 	default:
 		dev_err(chip->dev, "write div2_cp_slave property %d is not supported\n",
@@ -2485,32 +2339,13 @@ static int smb1398_div2_cp_slave_probe(struct smb1398_chip *chip)
 		return rc;
 	}
 
-	if (IS_SMB1394(chip->div2_cp_role)) {
-		rc = smb1398_masked_write(chip, PERPH0_SSUPPLY_CFG0_REG,
-				CFG_CMP_VOUT_VS_4V_REF_MASK,
-				CMP_VOUT_VS_4V_REF_3P2V);
-		if (rc < 0) {
-			dev_err(chip->dev, "Couldn't set PERPH0_SSUPPLY_CFG0_REG, rc=%d\n",
-					rc);
-			return rc;
-		}
-
-		rc = smb1398_masked_write(chip, PERPH0_DIV2_SLAVE,
-				CFG_EN_SLAVE_OWN_FREQ, CFG_EN_SLAVE_OWN_FREQ);
-		if (rc < 0) {
-			dev_err(chip->dev, "Couldn't set PERPH0_DIV2_SLAVE, rc=%d\n",
-					rc);
-			return rc;
-		}
-	} else {
-		/* Enable slave clock on its own */
-		rc = smb1398_masked_write(chip, NOLOCK_SPARE_REG,
-				EN_SLAVE_OWN_FREQ_BIT, EN_SLAVE_OWN_FREQ_BIT);
-		if (rc < 0) {
-			dev_err(chip->dev, "Couldn't enable slave clock, rc=%d\n",
-					rc);
-			return rc;
-		}
+	/* Enable slave clock on its own */
+	rc = smb1398_masked_write(chip, NOLOCK_SPARE_REG,
+			EN_SLAVE_OWN_FREQ_BIT, EN_SLAVE_OWN_FREQ_BIT);
+	if (rc < 0) {
+		dev_err(chip->dev, "Couldn't enable slave clock, rc=%d\n",
+				rc);
+		return rc;
 	}
 
 	rc = smb1398_init_div2_cp_slave_psy(chip);
@@ -2756,10 +2591,8 @@ static int smb1398_probe(struct platform_device *pdev)
 	chip->div2_cp_role = (int)of_device_get_match_data(chip->dev);
 	switch (chip->div2_cp_role) {
 	case DIV2_CP_MASTER:
-	case SMB1394_DIV2_CP_PRY:
 		rc = smb1398_div2_cp_master_probe(chip);
 		break;
-	case SMB1394_DIV2_CP_SECY:
 	case DIV2_CP_SLAVE:
 		rc = smb1398_div2_cp_slave_probe(chip);
 		break;
@@ -2790,8 +2623,7 @@ static int smb1398_remove(struct platform_device *pdev)
 {
 	struct smb1398_chip *chip = platform_get_drvdata(pdev);
 
-	if (chip->div2_cp_role == DIV2_CP_MASTER ||
-			chip->div2_cp_role == SMB1394_DIV2_CP_PRY) {
+	if (chip->div2_cp_role == DIV2_CP_MASTER) {
 		vote(chip->awake_votable, SHUTDOWN_VOTER, false, 0);
 		vote(chip->div2_cp_disable_votable, SHUTDOWN_VOTER, true, 0);
 		vote(chip->div2_cp_ilim_votable, SHUTDOWN_VOTER, true, 0);
@@ -2837,10 +2669,6 @@ static void smb1398_shutdown(struct platform_device *pdev)
 	rc = smb1398_div2_cp_switcher_en(chip, 0);
 	if (rc < 0)
 		dev_err(chip->dev, "Couldn't disable chip rc= %d\n", rc);
-
-	rc = smb1398_toggle_uvlo(chip);
-	if (rc < 0)
-		dev_err(chip->dev, "Couldn't toggle uvlo rc= %d\n", rc);
 }
 
 static const struct dev_pm_ops smb1398_pm_ops = {
@@ -2857,12 +2685,6 @@ static const struct of_device_id match_table[] = {
 	},
 	{ .compatible = "qcom,smb1398-pre-regulator",
 	  .data = (void *)COMBO_PRE_REGULATOR,
-	},
-	{ .compatible = "qcom,smb1394-div2-cp-primary",
-	  .data = (void *)SMB1394_DIV2_CP_PRY,
-	},
-	{ .compatible = "qcom,smb1394-div2-cp-secondary",
-	  .data = (void *)SMB1394_DIV2_CP_SECY,
 	},
 	{
 	},

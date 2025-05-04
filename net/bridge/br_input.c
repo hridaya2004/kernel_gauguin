@@ -163,7 +163,7 @@ int br_handle_frame_finish(struct net *net, struct sock *sk, struct sk_buff *skb
 	if (dst) {
 		unsigned long now = jiffies;
 
-		if (test_bit(BR_FDB_LOCAL, &dst->flags))
+		if (dst->is_local)
 			return br_pass_frame_up(skb);
 
 		if (now != dst->used)

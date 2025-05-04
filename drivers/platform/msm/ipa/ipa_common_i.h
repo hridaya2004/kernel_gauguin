@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2012-2020, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/ipa_mhi.h>
@@ -103,23 +103,6 @@
 		ipa_dec_client_disable_clks(&log_info); \
 	} while (0)
 
-#define IPA_ACTIVE_CLIENTS_INC_EP_NO_BLOCK(client) ({\
-	int __ret = 0; \
-	do { \
-		struct ipa_active_client_logging_info log_info; \
-		IPA_ACTIVE_CLIENTS_PREP_EP(log_info, client); \
-		__ret = ipa3_inc_client_enable_clks_no_block(&log_info); \
-	} while (0); \
-	(__ret); \
-})
-
-#define IPA_ACTIVE_CLIENTS_DEC_EP_NO_BLOCK(client) \
-	do { \
-		struct ipa_active_client_logging_info log_info; \
-		IPA_ACTIVE_CLIENTS_PREP_EP(log_info, client); \
-		ipa3_dec_client_disable_clks_no_block(&log_info); \
-	} while (0)
-
 /*
  * Printing one warning message in 5 seconds if multiple warning messages
  * are coming back to back.
@@ -162,8 +145,8 @@ do {\
 #define IPA_CLIENT_IS_CONS(x) \
 	(x < IPA_CLIENT_MAX && (x & 0x1) == 1)
 
-#define IPA_GSI_CHANNEL_STOP_SLEEP_MIN_USEC (3000)
-#define IPA_GSI_CHANNEL_STOP_SLEEP_MAX_USEC (5000)
+#define IPA_GSI_CHANNEL_STOP_SLEEP_MIN_USEC (1000)
+#define IPA_GSI_CHANNEL_STOP_SLEEP_MAX_USEC (2000)
 
 enum ipa_active_client_log_type {
 	EP,
@@ -361,6 +344,9 @@ extern const char *ipa_clients_strings[];
 				## args); \
 	} while (0)
 
+unsigned long
+ipa_safe_copy_from_user(char *dst, const char __user *buf, size_t count);
+
 void ipa_inc_client_enable_clks(struct ipa_active_client_logging_info *id);
 void ipa_dec_client_disable_clks(struct ipa_active_client_logging_info *id);
 int ipa_inc_client_enable_clks_no_block(
@@ -391,7 +377,7 @@ int ipa_mhi_start_channel_internal(enum ipa_client_type client);
 bool ipa_mhi_sps_channel_empty(enum ipa_client_type client);
 int ipa_mhi_resume_channels_internal(enum ipa_client_type client,
 		bool LPTransitionRejected, bool brstmode_enabled,
-		union gsi_channel_scratch ch_scratch, u8 index);
+		union __packed gsi_channel_scratch ch_scratch, u8 index);
 int ipa_mhi_handle_ipa_config_req(struct ipa_config_req_msg_v01 *config_req);
 int ipa_mhi_query_ch_info(enum ipa_client_type client,
 		struct gsi_chan_info *ch_info);

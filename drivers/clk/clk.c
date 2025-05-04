@@ -52,7 +52,6 @@ struct clk_handoff_vdd {
 static LIST_HEAD(clk_handoff_vdd_list);
 static bool vdd_class_handoff_completed;
 static DEFINE_MUTEX(vdd_class_list_lock);
-
 /*
  * clk_rate_change_list is used during clk_core_set_rate_nolock() calls to
  * handle vdd_class vote tracking.  core->rate_change_node is added to
@@ -272,17 +271,6 @@ static bool clk_core_is_enabled(struct clk_core *core)
 		}
 	}
 
-	/*
-	 * This could be called with the enable lock held, or from atomic
-	 * context. If the parent isn't enabled already, we can't do
-	 * anything here. We can also assume this clock isn't enabled.
-	 */
-	if ((core->flags & CLK_OPS_PARENT_ENABLE) && core->parent)
-		if (!clk_core_is_enabled(core->parent)) {
-			ret = false;
-			goto done;
-		}
-
 	ret = core->ops->is_enabled(core->hw);
 done:
 	if (core->rpm_enabled)
@@ -446,7 +434,6 @@ bool clk_hw_is_prepared(const struct clk_hw *hw)
 {
 	return clk_core_is_prepared(hw->core);
 }
-EXPORT_SYMBOL_GPL(clk_hw_is_prepared);
 
 bool clk_hw_rate_is_protected(const struct clk_hw *hw)
 {
@@ -457,7 +444,6 @@ bool clk_hw_is_enabled(const struct clk_hw *hw)
 {
 	return clk_core_is_enabled(hw->core);
 }
-EXPORT_SYMBOL_GPL(clk_hw_is_enabled);
 
 bool __clk_is_enabled(struct clk *clk)
 {
@@ -1028,6 +1014,8 @@ static void clk_core_unprepare(struct clk_core *core)
 	if (core->ops->unprepare)
 		core->ops->unprepare(core->hw);
 
+	clk_pm_runtime_put(core);
+
 	trace_clk_unprepare_complete(core);
 
 	if (core->vdd_class) {
@@ -1037,7 +1025,6 @@ static void clk_core_unprepare(struct clk_core *core)
 	}
 
 	clk_core_unprepare(core->parent);
-	clk_pm_runtime_put(core);
 }
 
 static void clk_core_unprepare_lock(struct clk_core *core)
@@ -2357,6 +2344,8 @@ static int clk_change_rate(struct clk_core *core)
 	if (core->flags & CLK_RECALC_NEW_RATES)
 		(void)clk_calc_new_rates(core, core->new_rate);
 
+	if (core->flags & CLK_CHILD_NO_RATE_PROP)
+		return rc;
 	/*
 	 * Use safe iteration, as change_rate can actually swap parents
 	 * for certain clock types.
@@ -3251,6 +3240,8 @@ int clk_set_flags(struct clk *clk, unsigned long flags)
 	return clk->core->ops->set_flags(clk->core->hw, flags);
 }
 EXPORT_SYMBOL_GPL(clk_set_flags);
+
+/***        debugfs support        ***/
 
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
@@ -4227,11 +4218,17 @@ static int __clk_core_init(struct clk_core *core)
 	if (core->flags & CLK_IS_CRITICAL) {
 		unsigned long flags;
 
-		clk_core_prepare(core);
+		ret = clk_core_prepare(core);
+		if (ret)
+			goto out;
 
 		flags = clk_enable_lock();
-		clk_core_enable(core);
+		ret = clk_core_enable(core);
 		clk_enable_unlock(flags);
+		if (ret) {
+			clk_core_unprepare(core);
+			goto out;
+		}
 	}
 
 	clk_core_hold_state(core);
@@ -4685,6 +4682,7 @@ static int clk_add_and_print_opp(struct clk_hw *hw,
 				unsigned long rate, int uv, int n)
 {
 	struct clk_core *core = hw->core;
+	unsigned long rrate;
 	int j, ret = 0;
 
 	for (j = 0; j < count; j++) {
@@ -4695,8 +4693,11 @@ static int clk_add_and_print_opp(struct clk_hw *hw,
 			return ret;
 		}
 
-		if (n == 0 || n == core->num_rate_max - 1 ||
-					rate == clk_hw_round_rate(hw, INT_MAX))
+		clk_prepare_lock();
+		rrate = clk_hw_round_rate(hw, INT_MAX);
+		clk_prepare_unlock();
+
+		if (n == 0 || n == core->num_rate_max - 1 || rate == rrate)
 			pr_info("%s: set OPP pair(%lu Hz: %u uV) on %s\n",
 						core->name, rate, uv,
 						dev_name(device_list[j]));
@@ -4751,7 +4752,9 @@ static void clk_populate_clock_opp_table(struct device_node *np,
 	}
 
 	for (n = 0; ; n++) {
+		clk_prepare_lock();
 		rrate = clk_hw_round_rate(hw, rate + 1);
+		clk_prepare_unlock();
 		if (!rrate) {
 			pr_err("clk_round_rate failed for %s\n",
 							core->name);

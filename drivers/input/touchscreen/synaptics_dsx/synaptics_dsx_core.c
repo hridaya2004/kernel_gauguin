@@ -36,7 +36,6 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/gpio.h>
 #include <linux/platform_device.h>
@@ -84,9 +83,11 @@ enum subsystem {
 #define F12_DATA_15_WORKAROUND
 
 #define IGNORE_FN_INIT_FAILURE
+#ifndef CONFIG_ARCH_SONY_NILE
 #define FB_READY_RESET
 #define FB_READY_WAIT_MS 100
 #define FB_READY_TIMEOUT_S 30
+#endif
 #ifdef SYNA_TDDI
 #define TDDI_LPWG_WAIT_US 10
 #endif
@@ -4007,25 +4008,22 @@ static int synaptics_rmi4_get_reg(struct synaptics_rmi4_data *rmi4_data,
 			retval = PTR_ERR(rmi4_data->pwr_reg);
 			goto regulator_put;
 		}
-	}
 
-	retval = regulator_set_load(rmi4_data->pwr_reg,
-		20000);
-	if (retval < 0) {
-		dev_err(rmi4_data->pdev->dev.parent,
-			"%s: Failed to set regulator current avdd\n",
-				__func__);
-		goto regulator_put;
-	}
+		retval = regulator_set_load(rmi4_data->pwr_reg, 20000);
+		if (retval < 0) {
+			dev_err(rmi4_data->pdev->dev.parent,
+				"%s: Failed to set regulator current avdd\n",
+					__func__);
+			goto regulator_put;
+		}
 
-	retval = regulator_set_voltage(rmi4_data->pwr_reg,
-			3000000,
-			3008000);
-	if (retval < 0) {
-		dev_err(rmi4_data->pdev->dev.parent,
-				"%s: Failed to set regulator voltage avdd\n",
-				__func__);
-		goto regulator_put;
+		retval = regulator_set_voltage(rmi4_data->pwr_reg, 3000000, 3008000);
+		if (retval < 0) {
+			dev_err(rmi4_data->pdev->dev.parent,
+					"%s: Failed to set regulator voltage avdd\n",
+					__func__);
+			goto regulator_put;
+		}
 	}
 
 	if ((bdata->bus_reg_name != NULL) && (*bdata->bus_reg_name != 0)) {
@@ -4038,25 +4036,22 @@ static int synaptics_rmi4_get_reg(struct synaptics_rmi4_data *rmi4_data,
 			retval = PTR_ERR(rmi4_data->bus_reg);
 			goto regulator_put;
 		}
-	}
 
-	retval = regulator_set_load(rmi4_data->bus_reg,
-		62000);
-	if (retval < 0) {
-		dev_err(rmi4_data->pdev->dev.parent,
-				"%s: Failed to set regulator current vdd\n",
-				__func__);
-		goto regulator_put;
-	}
+		retval = regulator_set_load(rmi4_data->bus_reg, 62000);
+		if (retval < 0) {
+			dev_err(rmi4_data->pdev->dev.parent,
+					"%s: Failed to set regulator current vdd\n",
+					__func__);
+			goto regulator_put;
+		}
 
-	retval = regulator_set_voltage(rmi4_data->bus_reg,
-			1800000,
-			1800000);
-	if (retval < 0) {
-		dev_err(rmi4_data->pdev->dev.parent,
-				"%s: Failed to set regulator voltage avdd\n",
-				__func__);
-		goto regulator_put;
+		retval = regulator_set_voltage(rmi4_data->bus_reg, 1800000, 1800000);
+		if (retval < 0) {
+			dev_err(rmi4_data->pdev->dev.parent,
+					"%s: Failed to set regulator voltage avdd\n",
+					__func__);
+			goto regulator_put;
+		}
 	}
 
 	return 0;
@@ -4589,6 +4584,16 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
 				__func__);
 		return -ENOMEM;
 	}
+
+	if (strstr(saved_command_line, "qcom,mdss_dsi_td4322_truly_fhd_cmd"))
+		rmi4_data->tp_source = TP_SOURCE_TRULY;
+	else if (strstr(saved_command_line, "qcom,mdss_dsi_td4322_innolux_fhd_cmd"))
+		rmi4_data->tp_source = TP_SOURCE_INNOLUX;
+	else if (strstr(saved_command_line, "qcom,mdss_dsi_td4328_tianma_fhdplus_cmd"))
+		rmi4_data->tp_source = TP_SOURCE_TIANMA;
+	else
+		/* tp_source default set to 0xFF (unknown) */
+		rmi4_data->tp_source = TP_SOURCE_UNKNOWN;
 
 	rmi4_data->pdev = pdev;
 	rmi4_data->current_page = MASK_8BIT;
@@ -5260,8 +5265,10 @@ exit:
 
 #ifdef CONFIG_PM
 static const struct dev_pm_ops synaptics_rmi4_dev_pm_ops = {
+#ifndef CONFIG_FB
 	.suspend = synaptics_rmi4_suspend,
 	.resume = synaptics_rmi4_resume,
+#endif
 };
 #endif
 

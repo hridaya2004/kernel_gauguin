@@ -416,8 +416,6 @@ static struct bfq_io_cq *bfq_bic_lookup(struct bfq_data *bfqd,
  */
 void bfq_schedule_dispatch(struct bfq_data *bfqd)
 {
-	lockdep_assert_held(&bfqd->lock);
-
 	if (bfqd->queued != 0) {
 		bfq_log(bfqd, "schedule dispatch");
 		blk_mq_run_hw_queues(bfqd->queue, true);
@@ -2226,12 +2224,8 @@ bfq_setup_cooperator(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	struct bfq_queue *in_service_bfqq, *new_bfqq;
 
 	/* if a merge has already been setup, then proceed with that first */
-	new_bfqq = bfqq->new_bfqq;
-	if (new_bfqq) {
-		while (new_bfqq->new_bfqq)
-			new_bfqq = new_bfqq->new_bfqq;
-		return new_bfqq;
-	}
+	if (bfqq->new_bfqq)
+		return bfqq->new_bfqq;
 
 	/*
 	 * Prevent bfqq from being merged if it has been created too
@@ -4084,7 +4078,6 @@ exit:
 #if defined(CONFIG_BFQ_GROUP_IOSCHED) && defined(CONFIG_DEBUG_BLK_CGROUP)
 static void bfq_update_dispatch_stats(struct request_queue *q,
 				      struct request *rq,
-				      struct bfq_queue *in_serv_queue,
 				      bool idle_timer_disabled)
 {
 	struct bfq_queue *bfqq = rq ? RQ_BFQQ(rq) : NULL;
@@ -4106,17 +4099,15 @@ static void bfq_update_dispatch_stats(struct request_queue *q,
 	 * bfqq_group(bfqq) exists as well.
 	 */
 	spin_lock_irq(q->queue_lock);
-	if (idle_timer_disabled)
+	if (bfqq && idle_timer_disabled)
 		/*
-		 * Since the idle timer has been disabled,
-		 * in_serv_queue contained some request when
-		 * __bfq_dispatch_request was invoked above, which
-		 * implies that rq was picked exactly from
-		 * in_serv_queue. Thus in_serv_queue == bfqq, and is
-		 * therefore guaranteed to exist because of the above
-		 * arguments.
+		 * It could be possible that current active
+		 * queue and group might got updated along with
+		 * request via. __bfq_dispatch_request.
+		 * So, always use current active request to
+		 * derive its associated bfq queue and group.
 		 */
-		bfqg_stats_update_idle_time(bfqq_group(in_serv_queue));
+		bfqg_stats_update_idle_time(bfqq_group(bfqq));
 	if (bfqq) {
 		struct bfq_group *bfqg = bfqq_group(bfqq);
 
@@ -4129,7 +4120,6 @@ static void bfq_update_dispatch_stats(struct request_queue *q,
 #else
 static inline void bfq_update_dispatch_stats(struct request_queue *q,
 					     struct request *rq,
-					     struct bfq_queue *in_serv_queue,
 					     bool idle_timer_disabled) {}
 #endif
 
@@ -4152,9 +4142,7 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 	}
 
 	spin_unlock_irq(&bfqd->lock);
-	bfq_update_dispatch_stats(hctx->queue, rq,
-			idle_timer_disabled ? in_serv_queue : NULL,
-				idle_timer_disabled);
+	bfq_update_dispatch_stats(hctx->queue, rq, idle_timer_disabled);
 
 	return rq;
 }
@@ -5037,7 +5025,7 @@ bfq_split_bfqq(struct bfq_io_cq *bic, struct bfq_queue *bfqq)
 {
 	bfq_log_bfqq(bfqq->bfqd, bfqq, "splitting queue");
 
-	if (bfqq_process_refs(bfqq) == 1 && !bfqq->new_bfqq) {
+	if (bfqq_process_refs(bfqq) == 1) {
 		bfqq->pid = current->pid;
 		bfq_clear_bfqq_coop(bfqq);
 		bfq_clear_bfqq_split_coop(bfqq);
@@ -5222,8 +5210,7 @@ static struct bfq_queue *bfq_init_rq(struct request *rq)
 	 * addition, if the queue has also just been split, we have to
 	 * resume its state.
 	 */
-	if (likely(bfqq != &bfqd->oom_bfqq) && !bfqq->new_bfqq &&
-	    bfqq_process_refs(bfqq) == 1) {
+	if (likely(bfqq != &bfqd->oom_bfqq) && bfqq_process_refs(bfqq) == 1) {
 		bfqq->bic = bic;
 		if (split) {
 			/*
@@ -5285,8 +5272,8 @@ bfq_idle_slice_timer_body(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 	bfq_bfqq_expire(bfqd, bfqq, true, reason);
 
 schedule_dispatch:
-	bfq_schedule_dispatch(bfqd);
 	spin_unlock_irqrestore(&bfqd->lock, flags);
+	bfq_schedule_dispatch(bfqd);
 }
 
 /*

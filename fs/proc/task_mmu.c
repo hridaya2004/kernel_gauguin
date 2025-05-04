@@ -760,7 +760,9 @@ static int smaps_hugetlb_range(pte_t *pte, unsigned long hmask,
 			page = device_private_entry_to_page(swpent);
 	}
 	if (page) {
-		if (page_mapcount(page) >= 2 || hugetlb_pmd_shared(pte))
+		int mapcount = page_mapcount(page);
+
+		if (mapcount >= 2)
 			mss->shared_hugetlb += huge_page_size(hstate_vma(vma));
 		else
 			mss->private_hugetlb += huge_page_size(hstate_vma(vma));
@@ -905,7 +907,7 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 		last_vma_end = vma->vm_end;
 	}
 
-	show_vma_header_prefix(m, priv->mm->mmap ? priv->mm->mmap->vm_start : 0,
+	show_vma_header_prefix(m, priv->mm->mmap->vm_start,
 			       last_vma_end, 0, 0, 0, 0);
 	seq_pad(m, ' ');
 	seq_puts(m, "[rollup]\n");
@@ -1684,7 +1686,7 @@ static void proc_reclaim_notify(unsigned long pid, void *rp)
 }
 
 int reclaim_address_space(struct address_space *mapping,
-			struct reclaim_param *rp)
+			struct reclaim_param *rp, struct vm_area_struct *vma)
 {
 	struct radix_tree_iter iter;
 	void __rcu **slot;
@@ -1725,7 +1727,7 @@ int reclaim_address_space(struct address_space *mapping,
 		}
 	}
 	rcu_read_unlock();
-	reclaimed = reclaim_pages_from_list(&page_list, NULL);
+	reclaimed = reclaim_pages_from_list(&page_list, vma);
 	rp->nr_reclaimed += reclaimed;
 
 	if (rp->nr_scanned >= rp->nr_to_reclaim)
@@ -1819,7 +1821,7 @@ struct reclaim_param reclaim_task_nomap(struct task_struct *task,
 		goto out;
 	down_read(&mm->mmap_sem);
 
-	proc_reclaim_notify((unsigned long)task_pid(task), (void *)&rp);
+	proc_reclaim_notify(task_tgid_nr(task), (void *)&rp);
 
 	up_read(&mm->mmap_sem);
 	mmput(mm);

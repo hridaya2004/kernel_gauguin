@@ -99,7 +99,6 @@ static inline u64 get_u64(const struct canfd_frame *cp, int offset)
 
 struct bcm_op {
 	struct list_head list;
-	struct rcu_head rcu;
 	int ifindex;
 	canid_t can_id;
 	u32 flags;
@@ -273,7 +272,6 @@ static void bcm_can_tx(struct bcm_op *op)
 	struct sk_buff *skb;
 	struct net_device *dev;
 	struct canfd_frame *cf = op->frames + op->cfsiz * op->currframe;
-	int err;
 
 	/* no target device? => exit */
 	if (!op->ifindex)
@@ -298,11 +296,11 @@ static void bcm_can_tx(struct bcm_op *op)
 	/* send with loopback */
 	skb->dev = dev;
 	can_skb_set_owner(skb, op->sk);
-	err = can_send(skb, 1);
-	if (!err)
-		op->frames_abs++;
+	can_send(skb, 1);
 
+	/* update statistics */
 	op->currframe++;
+	op->frames_abs++;
 
 	/* reached last frame? */
 	if (op->currframe >= op->nframes)
@@ -719,9 +717,10 @@ static struct bcm_op *bcm_find_op(struct list_head *ops,
 	return NULL;
 }
 
-static void bcm_free_op_rcu(struct rcu_head *rcu_head)
+static void bcm_remove_op(struct bcm_op *op)
 {
-	struct bcm_op *op = container_of(rcu_head, struct bcm_op, rcu);
+	hrtimer_cancel(&op->timer);
+	hrtimer_cancel(&op->thrtimer);
 
 	if ((op->frames) && (op->frames != &op->sframe))
 		kfree(op->frames);
@@ -730,14 +729,6 @@ static void bcm_free_op_rcu(struct rcu_head *rcu_head)
 		kfree(op->last_frames);
 
 	kfree(op);
-}
-
-static void bcm_remove_op(struct bcm_op *op)
-{
-	hrtimer_cancel(&op->timer);
-	hrtimer_cancel(&op->thrtimer);
-
-	call_rcu(&op->rcu, bcm_free_op_rcu);
 }
 
 static void bcm_rx_unreg(struct net_device *dev, struct bcm_op *op)
@@ -764,9 +755,6 @@ static int bcm_delete_rx_op(struct list_head *ops, struct bcm_msg_head *mh,
 	list_for_each_entry_safe(op, n, ops, list) {
 		if ((op->can_id == mh->can_id) && (op->ifindex == ifindex) &&
 		    (op->flags & CAN_FD_FRAME) == (mh->flags & CAN_FD_FRAME)) {
-
-			/* disable automatic timer on frame reception */
-			op->flags |= RX_NO_AUTOTIMER;
 
 			/*
 			 * Don't care if we're bound or not (due to netdev
@@ -796,6 +784,7 @@ static int bcm_delete_rx_op(struct list_head *ops, struct bcm_msg_head *mh,
 						  bcm_rx_handler, op);
 
 			list_del(&op->list);
+			synchronize_rcu();
 			bcm_remove_op(op);
 			return 1; /* done */
 		}
@@ -935,8 +924,6 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 
 			cf = op->frames + op->cfsiz * i;
 			err = memcpy_from_msg((u8 *)cf, msg, op->cfsiz);
-			if (err < 0)
-				goto free_op;
 
 			if (op->flags & CAN_FD_FRAME) {
 				if (cf->len > 64)
@@ -946,8 +933,12 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 					err = -EINVAL;
 			}
 
-			if (err < 0)
-				goto free_op;
+			if (err < 0) {
+				if (op->frames != &op->sframe)
+					kfree(op->frames);
+				kfree(op);
+				return err;
+			}
 
 			if (msg_head->flags & TX_CP_CAN_ID) {
 				/* copy can_id into frame */
@@ -1018,12 +1009,6 @@ static int bcm_tx_setup(struct bcm_msg_head *msg_head, struct msghdr *msg,
 		bcm_tx_start_timer(op);
 
 	return msg_head->nframes * op->cfsiz + MHSIZ;
-
-free_op:
-	if (op->frames != &op->sframe)
-		kfree(op->frames);
-	kfree(op);
-	return err;
 }
 
 /*
@@ -1422,12 +1407,6 @@ static void bcm_notify(struct bcm_sock *bo, unsigned long msg,
 
 		/* remove device reference, if this is our bound device */
 		if (bo->bound && bo->ifindex == dev->ifindex) {
-#if IS_ENABLED(CONFIG_PROC_FS)
-			if (sock_net(sk)->can.bcmproc_dir && bo->bcm_proc_read) {
-				remove_proc_entry(bo->procname, sock_net(sk)->can.bcmproc_dir);
-				bo->bcm_proc_read = NULL;
-			}
-#endif
 			bo->bound   = 0;
 			bo->ifindex = 0;
 			notify_enodev = 1;
@@ -1526,12 +1505,6 @@ static int bcm_release(struct socket *sock)
 
 	lock_sock(sk);
 
-#if IS_ENABLED(CONFIG_PROC_FS)
-	/* remove procfs entry */
-	if (net->can.bcmproc_dir && bo->bcm_proc_read)
-		remove_proc_entry(bo->procname, net->can.bcmproc_dir);
-#endif /* CONFIG_PROC_FS */
-
 	list_for_each_entry_safe(op, next, &bo->tx_ops, list)
 		bcm_remove_op(op);
 
@@ -1566,6 +1539,12 @@ static int bcm_release(struct socket *sock)
 
 	list_for_each_entry_safe(op, next, &bo->rx_ops, list)
 		bcm_remove_op(op);
+
+#if IS_ENABLED(CONFIG_PROC_FS)
+	/* remove procfs entry */
+	if (net->can.bcmproc_dir && bo->bcm_proc_read)
+		remove_proc_entry(bo->procname, net->can.bcmproc_dir);
+#endif /* CONFIG_PROC_FS */
 
 	/* remove device reference */
 	if (bo->bound) {

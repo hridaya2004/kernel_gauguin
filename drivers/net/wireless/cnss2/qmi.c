@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2015-2021, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved. */
 
 #include <linux/firmware.h>
 #include <linux/module.h>
@@ -14,16 +14,11 @@
 #define WLFW_CLIENT_ID			0x4b4e454c
 #define BDF_FILE_NAME_PREFIX		"bdwlan"
 #define ELF_BDF_FILE_NAME		"bdwlan.elf"
-#define ELF_BDF_FILE_NAME_GF		"bdwlang.elf"
 #define ELF_BDF_FILE_NAME_PREFIX	"bdwlan.e"
-#define ELF_BDF_FILE_NAME_GF_PREFIX	"bdwlang.e"
 #define BIN_BDF_FILE_NAME		"bdwlan.bin"
-#define BIN_BDF_FILE_NAME_GF		"bdwlang.bin"
 #define BIN_BDF_FILE_NAME_PREFIX	"bdwlan.b"
-#define BIN_BDF_FILE_NAME_GF_PREFIX	"bdwlang.b"
 #define REGDB_FILE_NAME			"regdb.bin"
 #define DUMMY_BDF_FILE_NAME		"bdwlan.dmy"
-#define CHIP_ID_GF_MASK			0x10
 
 #define QMI_WLFW_TIMEOUT_MS		(plat_priv->ctrl_params.qmi_timeout)
 #define QMI_WLFW_TIMEOUT_JF		msecs_to_jiffies(QMI_WLFW_TIMEOUT_MS)
@@ -93,12 +88,11 @@ static int cnss_wlfw_ind_register_send_sync(struct cnss_plat_data *plat_priv)
 
 	req->client_id_valid = 1;
 	req->client_id = WLFW_CLIENT_ID;
-	req->fw_ready_enable_valid = 1;
-	req->fw_ready_enable = 1;
 	req->request_mem_enable_valid = 1;
 	req->request_mem_enable = 1;
 	req->fw_mem_ready_enable_valid = 1;
 	req->fw_mem_ready_enable = 1;
+	/* fw_ready indication is replaced by fw_init_done in HST/HSP */
 	req->fw_init_done_enable_valid = 1;
 	req->fw_init_done_enable = 1;
 	req->pin_connect_result_enable_valid = 1;
@@ -227,15 +221,6 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 	req->cal_done_valid = 1;
 	req->cal_done = plat_priv->cal_done;
 	cnss_pr_dbg("Calibration done is %d\n", plat_priv->cal_done);
-
-	if (plat_priv->cal_duration != CNSS_INVALID_CAL_DURATION) {
-		req->cal_duration_valid = 1;
-		req->cal_duration = plat_priv->cal_duration;
-		cnss_pr_dbg("Calibration duration: %u",
-			    plat_priv->cal_duration);
-	} else {
-		cnss_pr_dbg("Calibration duration not valid");
-	}
 
 	if (!cnss_bus_get_iova(plat_priv, &iova_start, &iova_size) &&
 	    !cnss_bus_get_iova_ipa(plat_priv, &iova_ipa_start,
@@ -389,7 +374,7 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	struct wlfw_cap_resp_msg_v01 *resp;
 	struct qmi_txn txn;
 	char *fw_build_timestamp;
-	int ret = 0, i;
+	int ret = 0;
 
 	cnss_pr_dbg("Sending target capability message, state: 0x%lx\n",
 		    plat_priv->driver_state);
@@ -474,17 +459,7 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	}
 	if (resp->otp_version_valid)
 		plat_priv->otp_version = resp->otp_version;
-	if (resp->dev_mem_info_valid) {
-		for (i = 0; i < QMI_WLFW_MAX_DEV_MEM_NUM_V01; i++) {
-			plat_priv->dev_mem_info[i].start =
-				resp->dev_mem_info[i].start;
-			plat_priv->dev_mem_info[i].size =
-				resp->dev_mem_info[i].size;
-			cnss_pr_dbg("Device memory info[%d]: start = 0x%llx, size = 0x%llx\n",
-				    i, plat_priv->dev_mem_info[i].start,
-				    plat_priv->dev_mem_info[i].size);
-		}
-	}
+
 	if (resp->fw_caps_valid)
 		plat_priv->fw_pcie_gen_switch =
 			!!(resp->fw_caps & QMI_WLFW_HOST_PCIE_GEN_SWITCH_V01);
@@ -518,53 +493,30 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 
 	switch (bdf_type) {
 	case CNSS_BDF_ELF:
-		/* Board ID will be equal or less than 0xFF in GF mask case */
-		if (plat_priv->board_info.board_id == 0xFF) {
-			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
-				snprintf(filename_tmp, filename_len,
-					 ELF_BDF_FILE_NAME_GF);
-			else
-				snprintf(filename_tmp, filename_len,
-					 ELF_BDF_FILE_NAME);
-		} else if (plat_priv->board_info.board_id < 0xFF) {
-			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
-				snprintf(filename_tmp, filename_len,
-					 ELF_BDF_FILE_NAME_GF_PREFIX "%02x",
-					 plat_priv->board_info.board_id);
-			else
-				snprintf(filename_tmp, filename_len,
-					 ELF_BDF_FILE_NAME_PREFIX "%02x",
-					 plat_priv->board_info.board_id);
-		} else {
+		if (plat_priv->board_info.board_id == 0xFF)
+			snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
+		else if (plat_priv->board_info.board_id < 0xFF)
+			snprintf(filename_tmp, filename_len,
+				 ELF_BDF_FILE_NAME_PREFIX "%02x",
+				 plat_priv->board_info.board_id);
+		else
 			snprintf(filename_tmp, filename_len,
 				 BDF_FILE_NAME_PREFIX "%02x.e%02x",
 				 plat_priv->board_info.board_id >> 8 & 0xFF,
 				 plat_priv->board_info.board_id & 0xFF);
-		}
 		break;
 	case CNSS_BDF_BIN:
-		if (plat_priv->board_info.board_id == 0xFF) {
-			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
-				snprintf(filename_tmp, filename_len,
-					 BIN_BDF_FILE_NAME_GF);
-			else
-				snprintf(filename_tmp, filename_len,
-					 BIN_BDF_FILE_NAME);
-		} else if (plat_priv->board_info.board_id < 0xFF) {
-			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
-				snprintf(filename_tmp, filename_len,
-					 BIN_BDF_FILE_NAME_GF_PREFIX "%02x",
-					 plat_priv->board_info.board_id);
-			else
-				snprintf(filename_tmp, filename_len,
-					 BIN_BDF_FILE_NAME_PREFIX "%02x",
-					 plat_priv->board_info.board_id);
-		} else {
+		if (plat_priv->board_info.board_id == 0xFF)
+			snprintf(filename_tmp, filename_len, BIN_BDF_FILE_NAME);
+		else if (plat_priv->board_info.board_id < 0xFF)
+			snprintf(filename_tmp, filename_len,
+				 BIN_BDF_FILE_NAME_PREFIX "%02x",
+				 plat_priv->board_info.board_id);
+		else
 			snprintf(filename_tmp, filename_len,
 				 BDF_FILE_NAME_PREFIX "%02x.b%02x",
 				 plat_priv->board_info.board_id >> 8 & 0xFF,
 				 plat_priv->board_info.board_id & 0xFF);
-		}
 		break;
 	case CNSS_BDF_REGDB:
 		snprintf(filename_tmp, filename_len, REGDB_FILE_NAME);
@@ -1826,6 +1778,8 @@ out:
 
 unsigned int cnss_get_qmi_timeout(struct cnss_plat_data *plat_priv)
 {
+	cnss_pr_dbg("QMI timeout is %u ms\n", QMI_WLFW_TIMEOUT_MS);
+
 	return QMI_WLFW_TIMEOUT_MS;
 }
 
@@ -1878,6 +1832,12 @@ static void cnss_wlfw_fw_mem_ready_ind_cb(struct qmi_handle *qmi_wlfw,
 			       0, NULL);
 }
 
+/**
+ * cnss_wlfw_fw_ready_ind_cb: FW ready indication handler (Helium arch)
+ *
+ * This event is not required for HST/ HSP as FW calibration done is
+ * provided in QMI_WLFW_CAL_DONE_IND_V01
+ */
 static void cnss_wlfw_fw_ready_ind_cb(struct qmi_handle *qmi_wlfw,
 				      struct sockaddr_qrtr *sq,
 				      struct qmi_txn *txn, const void *data)
@@ -1886,13 +1846,18 @@ static void cnss_wlfw_fw_ready_ind_cb(struct qmi_handle *qmi_wlfw,
 		container_of(qmi_wlfw, struct cnss_plat_data, qmi_wlfw);
 	struct cnss_cal_info *cal_info;
 
-	cnss_pr_dbg("Received QMI WLFW FW ready indication\n");
-
 	if (!txn) {
 		cnss_pr_err("Spurious indication\n");
 		return;
 	}
 
+	if (plat_priv->device_id == QCA6390_DEVICE_ID ||
+	    plat_priv->device_id == QCA6490_DEVICE_ID) {
+		cnss_pr_dbg("Ignore FW Ready Indication for HST/HSP");
+		return;
+	}
+
+	cnss_pr_dbg("Received QMI WLFW FW ready indication.\n");
 	cal_info = kzalloc(sizeof(*cal_info), GFP_KERNEL);
 	if (!cal_info)
 		return;
@@ -2233,11 +2198,6 @@ int cnss_wlfw_server_arrive(struct cnss_plat_data *plat_priv, void *data)
 
 	if (test_bit(CNSS_QMI_WLFW_CONNECTED, &plat_priv->driver_state)) {
 		cnss_pr_err("Unexpected WLFW server arrive\n");
-		return -EINVAL;
-	}
-
-	if (test_bit(CNSS_IN_REBOOT, &plat_priv->driver_state)) {
-		cnss_pr_err("WLFW server will exit on shutdown\n");
 		return -EINVAL;
 	}
 

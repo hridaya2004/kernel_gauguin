@@ -330,10 +330,8 @@ static struct sock_mapping *pvcalls_new_active_socket(
 	void *page;
 
 	map = kzalloc(sizeof(*map), GFP_KERNEL);
-	if (map == NULL) {
-		sock_release(sock);
+	if (map == NULL)
 		return NULL;
-	}
 
 	map->fedata = fedata;
 	map->sock = sock;
@@ -425,8 +423,10 @@ static int pvcalls_back_connect(struct xenbus_device *dev,
 					req->u.connect.ref,
 					req->u.connect.evtchn,
 					sock);
-	if (!map)
+	if (!map) {
 		ret = -EFAULT;
+		sock_release(sock);
+	}
 
 out:
 	rsp = RING_GET_RESPONSE(&fedata->ring, fedata->ring.rsp_prod_pvt++);
@@ -567,6 +567,7 @@ static void __pvcalls_back_accept(struct work_struct *work)
 					sock);
 	if (!map) {
 		ret = -EFAULT;
+		sock_release(sock);
 		goto out_error;
 	}
 

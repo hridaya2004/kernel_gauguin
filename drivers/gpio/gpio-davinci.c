@@ -207,11 +207,6 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 	else
 		nirq = DIV_ROUND_UP(ngpio, 16);
 
-	if (nirq > MAX_INT_PER_BANK) {
-		dev_err(dev, "Too many IRQs!\n");
-		return -EINVAL;
-	}
-
 	nbank = DIV_ROUND_UP(ngpio, 32);
 	chips = devm_kcalloc(dev,
 			     nbank, sizeof(struct davinci_gpio_controller),
@@ -294,7 +289,7 @@ err:
  * serve as EDMA event triggers.
  */
 
-static void gpio_irq_mask(struct irq_data *d)
+static void gpio_irq_disable(struct irq_data *d)
 {
 	struct davinci_gpio_regs __iomem *g = irq2regs(d);
 	u32 mask = (u32) irq_data_get_irq_handler_data(d);
@@ -303,7 +298,7 @@ static void gpio_irq_mask(struct irq_data *d)
 	writel_relaxed(mask, &g->clr_rising);
 }
 
-static void gpio_irq_unmask(struct irq_data *d)
+static void gpio_irq_enable(struct irq_data *d)
 {
 	struct davinci_gpio_regs __iomem *g = irq2regs(d);
 	u32 mask = (u32) irq_data_get_irq_handler_data(d);
@@ -329,10 +324,10 @@ static int gpio_irq_type(struct irq_data *d, unsigned trigger)
 
 static struct irq_chip gpio_irqchip = {
 	.name		= "GPIO",
-	.irq_unmask	= gpio_irq_unmask,
-	.irq_mask	= gpio_irq_mask,
+	.irq_enable	= gpio_irq_enable,
+	.irq_disable	= gpio_irq_disable,
 	.irq_set_type	= gpio_irq_type,
-	.flags		= IRQCHIP_SET_TYPE_MASKED | IRQCHIP_SKIP_SET_WAKE,
+	.flags		= IRQCHIP_SET_TYPE_MASKED,
 };
 
 static void gpio_irq_handler(struct irq_desc *desc)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2015, 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2018-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -30,7 +30,6 @@
 #define PLL_VOTE_FSM_RESET	BIT(21)
 #define PLL_UPDATE		BIT(22)
 #define PLL_UPDATE_BYPASS	BIT(23)
-#define PLL_FSM_LEGACY_MODE	BIT(24)
 #define PLL_ALPHA_EN		BIT(24)
 #define PLL_OFFLINE_ACK		BIT(28)
 #define ALPHA_PLL_ACK_LATCH	BIT(29)
@@ -44,7 +43,7 @@
 
 #define PLL_USER_CTL(p)		((p)->offset + (p)->regs[PLL_OFF_USER_CTL])
 #define PLL_POST_DIV_SHIFT	8
-#define PLL_POST_DIV_MASK(p)	GENMASK((p)->width ? (p)->width - 1 : 3, 0)
+#define PLL_POST_DIV_MASK(p)	GENMASK((p)->width, 0)
 #define PLL_ALPHA_EN		BIT(24)
 #define PLL_ALPHA_MODE		BIT(25)
 #define PLL_VCO_SHIFT		20
@@ -148,6 +147,35 @@ const u8 clk_alpha_pll_regs[][PLL_OFF_MAX_REGS] = {
 		[PLL_OFF_TEST_CTL_U] = 0x1c,
 		[PLL_OFF_STATUS] = 0x2c,
 	},
+	[CLK_ALPHA_PLL_TYPE_TRION] = {
+		[PLL_OFF_L_VAL] = 0x04,
+		[PLL_OFF_CAL_L_VAL] = 0x08,
+		[PLL_OFF_USER_CTL] = 0x0c,
+		[PLL_OFF_USER_CTL_U] = 0x10,
+		[PLL_OFF_USER_CTL_U1] = 0x14,
+		[PLL_OFF_CONFIG_CTL] = 0x18,
+		[PLL_OFF_CONFIG_CTL_U] = 0x1c,
+		[PLL_OFF_CONFIG_CTL_U1] = 0x20,
+		[PLL_OFF_TEST_CTL] = 0x24,
+		[PLL_OFF_TEST_CTL_U] = 0x28,
+		[PLL_OFF_TEST_CTL_U1] = 0x2c,
+		[PLL_OFF_STATUS] = 0x30,
+		[PLL_OFF_OPMODE] = 0x38,
+		[PLL_OFF_ALPHA_VAL] = 0x40,
+	},
+	[CLK_ALPHA_PLL_TYPE_REGERA] =  {
+		[PLL_OFF_L_VAL] = 0x04,
+		[PLL_OFF_ALPHA_VAL] = 0x08,
+		[PLL_OFF_USER_CTL] = 0x0c,
+		[PLL_OFF_CONFIG_CTL] = 0x10,
+		[PLL_OFF_CONFIG_CTL_U] = 0x14,
+		[PLL_OFF_CONFIG_CTL_U1] = 0x18,
+		[PLL_OFF_TEST_CTL] = 0x1c,
+		[PLL_OFF_TEST_CTL_U] = 0x20,
+		[PLL_OFF_TEST_CTL_U1] = 0x24,
+		[PLL_OFF_OPMODE] = 0x28,
+		[PLL_OFF_STATUS] = 0x38,
+	},
 };
 EXPORT_SYMBOL_GPL(clk_alpha_pll_regs);
 
@@ -183,6 +211,9 @@ EXPORT_SYMBOL_GPL(clk_alpha_pll_regs);
 
 /* FABIA PLL specific settings */
 #define FABIA_PLL_CAL_VAL	0x3F
+
+/* TRION PLL specific settings */
+#define TRION_PCAL_DONE			BIT(26)
 
 #define pll_alpha_width(p)					\
 		((PLL_ALPHA_VAL_U(p) - PLL_ALPHA_VAL(p) == 4) ?	\
@@ -510,22 +541,9 @@ alpha_pll_calc_rate(u64 prate, u32 l, u32 a, u32 alpha_width)
 	return (prate * l) + ((prate * a) >> ALPHA_SHIFT(alpha_width));
 }
 
-static void zonda_pll_adjust_l_val(unsigned long rate, unsigned long prate,
-									u32 *l)
-{
-	u64 remainder, quotient;
-
-	quotient = rate;
-	remainder = do_div(quotient, prate);
-	*l = quotient;
-
-	if ((remainder * 2) / prate)
-		*l = *l + 1;
-}
-
 static unsigned long
 alpha_pll_round_rate(unsigned long rate, unsigned long prate, u32 *l, u64 *a,
-			u32 alpha_width)
+		     u32 alpha_width)
 {
 	u64 remainder;
 	u64 quotient;
@@ -1279,10 +1297,10 @@ static int clk_zonda_pll_enable(struct clk_hw *hw)
 static void clk_zonda_pll_disable(struct clk_hw *hw)
 {
 	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	u32 val, mask;
+	u32 val, mask, off = pll->offset;
 	int ret;
 
-	ret = regmap_read(pll->clkr.regmap, PLL_MODE(pll), &val);
+	ret = regmap_read(pll->clkr.regmap, off + PLL_MODE(pll), &val);
 	if (ret)
 		return;
 
@@ -1318,13 +1336,12 @@ static int clk_zonda_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 {
 	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
 	unsigned long rrate;
-	u32 test_ctl_val, alpha_width = pll_alpha_width(pll);
+	u32 test_ctl_val;
 	u32 l;
 	u64 a;
 	int ret;
 
-	rrate = alpha_pll_round_rate(rate, prate, &l, &a, alpha_width);
-
+	rrate = alpha_pll_round_rate(rate, prate, &l, &a, ALPHA_BITWIDTH);
 	/*
 	 * Due to a limited number of bits for fractional rate programming, the
 	 * rounded up rate could be marginally higher than the requested rate.
@@ -1335,14 +1352,8 @@ static int clk_zonda_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 		return -EINVAL;
 	}
 
-	if (a && (a & BIT(15)))
-		zonda_pll_adjust_l_val(rate, prate, &l);
-
 	regmap_write(pll->clkr.regmap, PLL_ALPHA_VAL(pll), a);
 	regmap_write(pll->clkr.regmap, PLL_L_VAL(pll), l);
-
-	if (!clk_hw_is_enabled(hw))
-		return 0;
 
 	/* Wait before polling for the frequency latch */
 	udelay(5);
@@ -1365,33 +1376,16 @@ static int clk_zonda_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-static unsigned long alpha_pll_adjust_calc_rate(u64 prate, u32 l, u32 frac,
-		u32 alpha_width)
-{
-	uint64_t tmp;
-
-	frac = 100 - DIV_ROUND_UP_ULL((frac * 100), BIT(alpha_width));
-
-	tmp = frac * prate;
-	do_div(tmp, 100);
-
-	return (l * prate) - tmp;
-}
-
 static unsigned long
 clk_zonda_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
 {
 	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	u32 l, frac, alpha_width = pll_alpha_width(pll);
+	u32 l, frac;
 
 	regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
 	regmap_read(pll->clkr.regmap, PLL_ALPHA_VAL(pll), &frac);
 
-	if (frac & BIT(15))
-		return alpha_pll_adjust_calc_rate(parent_rate, l, frac,
-								alpha_width);
-	else
-		return alpha_pll_calc_rate(parent_rate, l, frac, alpha_width);
+	return alpha_pll_calc_rate(parent_rate, l, frac, ALPHA_BITWIDTH);
 }
 
 static void clk_zonda_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
@@ -2114,9 +2108,6 @@ void clk_lucid_pll_configure(struct clk_alpha_pll *pll, struct regmap *regmap,
 				 PLL_UPDATE_BYPASS,
 				 PLL_UPDATE_BYPASS);
 
-	if (pll->flags & SUPPORTS_FSM_LEGACY_MODE)
-		regmap_update_bits(regmap, PLL_MODE(pll), PLL_FSM_LEGACY_MODE,
-						PLL_FSM_LEGACY_MODE);
 	/* Disable PLL output */
 	regmap_update_bits(regmap, PLL_MODE(pll),
 					PLL_OUTCTRL, 0);
@@ -2310,13 +2301,7 @@ static int alpha_pll_lucid_set_rate(struct clk_hw *hw, unsigned long rate,
 	/* Wait for 2 reference cycles before checking the ACK bit. */
 	udelay(1);
 	regmap_read(pll->clkr.regmap, PLL_MODE(pll), &regval);
-	if (!(regval & PLL_UPDATE_BYPASS)) {
-		ret = wait_for_pll_update(pll);
-		if (ret)
-			WARN_CLK(hw->core, clk_hw_get_name(hw), 1,
-				"PLL Update clear failed\n");
-		return ret;
-	} else if (!(regval & ALPHA_PLL_ACK_LATCH)) {
+	if (!(regval & ALPHA_PLL_ACK_LATCH)) {
 		WARN_CLK(hw->core, clk_hw_get_name(hw), 1,
 				"PLL latch failed. Output may be unstable!\n");
 		return -EINVAL;
@@ -2725,7 +2710,8 @@ static int clk_alpha_pll_calibrate(struct clk_hw *hw)
 	 * So slew pll to the previously set frequency.
 	 */
 	freq_hz = alpha_pll_round_rate(clk_hw_get_rate(hw),
-				clk_hw_get_rate(parent), &l, &a, alpha_width);
+			clk_hw_get_rate(parent), &l, &a, alpha_width);
+
 
 	pr_debug("pll %s: setting back to required rate %lu, freq_hz %ld\n",
 				hw->init->name, clk_hw_get_rate(hw), freq_hz);
@@ -2764,3 +2750,715 @@ const struct clk_ops clk_alpha_pll_slew_ops = {
 	.set_rate = clk_alpha_pll_slew_set_rate,
 	.list_registers = clk_alpha_pll_list_registers,
 };
+
+static int trion_pll_is_enabled(struct clk_alpha_pll *pll,
+				struct regmap *regmap)
+{
+	u32 mode_regval, opmode_regval;
+	int ret;
+
+	ret = regmap_read(regmap, PLL_MODE(pll), &mode_regval);
+	ret |= regmap_read(regmap, PLL_OPMODE(pll), &opmode_regval);
+	if (ret)
+		return 0;
+
+	return ((opmode_regval & PLL_OPMODE_RUN) &&
+				(mode_regval & PLL_OUTCTRL));
+}
+
+int clk_trion_pll_configure(struct clk_alpha_pll *pll, struct regmap *regmap,
+				const struct alpha_pll_config *config)
+{
+	int ret;
+
+	if (!config) {
+		pr_err("PLL configuration missing.\n");
+		return -EINVAL;
+	}
+
+	if (trion_pll_is_enabled(pll, regmap)) {
+		pr_warn("PLL is already enabled. Skipping configuration.\n");
+		return 0;
+	}
+
+	if (config->l)
+		regmap_write(regmap, PLL_L_VAL(pll), config->l);
+
+	regmap_write(regmap, PLL_CAL_L_VAL(pll), LUCID_PLL_CAL_VAL);
+
+	if (config->alpha)
+		regmap_write(regmap, PLL_ALPHA_VAL(pll), config->alpha);
+
+	if (config->config_ctl_val)
+		regmap_write(regmap, PLL_CONFIG_CTL(pll),
+						config->config_ctl_val);
+
+	if (config->config_ctl_hi_val)
+		regmap_write(regmap, PLL_CONFIG_CTL_U(pll),
+						config->config_ctl_hi_val);
+
+	if (config->config_ctl_hi1_val)
+		regmap_write(regmap, PLL_CONFIG_CTL_U1(pll),
+						config->config_ctl_hi1_val);
+
+	if (config->user_ctl_val)
+		regmap_write(regmap, PLL_USER_CTL(pll),
+						config->user_ctl_val);
+
+	if (config->user_ctl_hi_val)
+		regmap_write(regmap, PLL_USER_CTL_U(pll),
+						config->user_ctl_hi_val);
+
+	if (config->user_ctl_hi1_val)
+		regmap_write(regmap, PLL_USER_CTL_U1(pll),
+						config->user_ctl_hi1_val);
+
+	if (config->test_ctl_val)
+		regmap_write(regmap, PLL_TEST_CTL(pll),
+						config->test_ctl_val);
+
+	if (config->test_ctl_hi_val)
+		regmap_write(regmap, PLL_TEST_CTL_U(pll),
+						config->test_ctl_hi_val);
+
+	if (config->test_ctl_hi1_val)
+		regmap_write(regmap, PLL_TEST_CTL_U1(pll),
+						config->test_ctl_hi1_val);
+
+	regmap_update_bits(regmap, + PLL_MODE(pll), PLL_UPDATE_BYPASS,
+						PLL_UPDATE_BYPASS);
+
+	/* Disable PLL output */
+	ret = regmap_update_bits(regmap, PLL_MODE(pll), PLL_OUTCTRL, 0);
+	if (ret)
+		return ret;
+
+	/* Set operation mode to OFF */
+	regmap_write(regmap, PLL_OPMODE(pll), PLL_OPMODE_STANDBY);
+
+	/* PLL should be in OFF mode before continuing */
+	wmb();
+
+	/* Place the PLL in STANDBY mode */
+	ret = regmap_update_bits(regmap, PLL_MODE(pll), PLL_RESET_N,
+							PLL_RESET_N);
+	return ret;
+}
+EXPORT_SYMBOL(clk_trion_pll_configure);
+
+static int clk_trion_pll_is_enabled(struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+
+	return trion_pll_is_enabled(pll, pll->clkr.regmap);
+}
+
+static int clk_trion_pll_enable(struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	struct regmap *regmap = pll->clkr.regmap;
+	u32 val;
+	int ret;
+
+	ret = regmap_read(regmap, PLL_MODE(pll), &val);
+	if (ret)
+		return ret;
+
+	/* If in FSM mode, just vote for it */
+	if (val & PLL_VOTE_FSM_ENA) {
+		ret = clk_enable_regmap(hw);
+		if (ret)
+			return ret;
+		return wait_for_pll_enable_active(pll);
+	}
+
+	/* Set operation mode to RUN */
+	regmap_write(regmap, PLL_OPMODE(pll), PLL_OPMODE_RUN);
+
+	ret = wait_for_pll_enable_lock(pll);
+	if (ret)
+		return ret;
+
+	/* Enable the PLL outputs */
+	ret = regmap_update_bits(regmap, PLL_USER_CTL(pll),
+					PLL_OUT_MASK, PLL_OUT_MASK);
+	if (ret)
+		return ret;
+
+	/* Enable the global PLL outputs */
+	return regmap_update_bits(regmap, PLL_MODE(pll),
+				 PLL_OUTCTRL, PLL_OUTCTRL);
+}
+
+static void clk_trion_pll_disable(struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	struct regmap *regmap = pll->clkr.regmap;
+	u32 val;
+	int ret;
+
+	ret = regmap_read(regmap, PLL_MODE(pll), &val);
+	if (ret)
+		return;
+
+	/* If in FSM mode, just unvote it */
+	if (val & PLL_VOTE_FSM_ENA) {
+		clk_disable_regmap(hw);
+		return;
+	}
+
+	/* Disable the global PLL output */
+	ret = regmap_update_bits(regmap, PLL_MODE(pll), PLL_OUTCTRL, 0);
+	if (ret)
+		return;
+
+	/* Disable the PLL outputs */
+	ret = regmap_update_bits(regmap, PLL_USER_CTL(pll),
+					PLL_OUT_MASK, 0);
+	if (ret)
+		return;
+
+	/* Place the PLL mode in STANDBY */
+	regmap_write(regmap, PLL_OPMODE(pll), PLL_OPMODE_STANDBY);
+	regmap_update_bits(regmap, PLL_MODE(pll), PLL_RESET_N, PLL_RESET_N);
+}
+
+static unsigned long
+clk_trion_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	u32 l, frac, alpha_width = pll_alpha_width(pll);
+
+	regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
+	regmap_read(pll->clkr.regmap, PLL_ALPHA_VAL(pll), &frac);
+
+	return alpha_pll_calc_rate(parent_rate, l, frac, alpha_width);
+}
+
+static int clk_trion_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+				  unsigned long prate)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	unsigned long rrate;
+	u32 regval, l, cal_val, alpha_width = pll_alpha_width(pll);
+	u64 a;
+	int ret;
+
+	ret = regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(pll->clkr.regmap, PLL_CAL_L_VAL(pll), &cal_val);
+	if (ret)
+		return ret;
+
+	/* PLL has lost it's L or CAL value, needs reconfiguration */
+	if (!l || !cal_val) {
+		ret = clk_trion_pll_configure(pll, pll->clkr.regmap,
+						pll->config);
+		if (ret) {
+			pr_err("Failed to configure %s\n", clk_hw_get_name(hw));
+			return ret;
+		}
+		pr_warn("%s: PLL configuration lost, reconfiguration of PLL done.\n",
+				clk_hw_get_name(hw));
+	}
+
+	rrate = alpha_pll_round_rate(rate, prate, &l, &a, alpha_width);
+	/*
+	 * Due to a limited number of bits for fractional rate programming, the
+	 * rounded up rate could be marginally higher than the requested rate.
+	 */
+	if (rrate > (rate + PLL_OUT_RATE_MARGIN) || rrate < rate) {
+		pr_err("Call set rate on the PLL with rounded rates!\n");
+		return -EINVAL;
+	}
+
+	regmap_write(pll->clkr.regmap, PLL_L_VAL(pll), l);
+	regmap_write(pll->clkr.regmap, PLL_ALPHA_VAL(pll), a);
+
+	/* Latch the PLL input */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+					PLL_UPDATE, PLL_UPDATE);
+	if (ret)
+		return ret;
+
+	/* Wait for 2 reference cycles before checking the ACK bit. */
+	udelay(1);
+	regmap_read(pll->clkr.regmap, PLL_MODE(pll), &regval);
+	if (!(regval & ALPHA_PLL_ACK_LATCH)) {
+		WARN_CLK(hw->core, clk_hw_get_name(hw), 1,
+				"PLL latch failed. Output may be unstable!\n");
+		return -EINVAL;
+	}
+
+	/* Return the latch input to 0 */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+						PLL_UPDATE, 0);
+	if (ret)
+		return ret;
+
+	if (clk_hw_is_enabled(hw)) {
+		ret = wait_for_pll_enable_lock(pll);
+		if (ret)
+			return ret;
+	}
+
+	/* Wait for PLL output to stabilize */
+	udelay(100);
+	return 0;
+}
+
+static int clk_trion_pll_prepare(struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	u32 regval;
+	int ret;
+
+	/* Return early if calibration is not needed. */
+	regmap_read(pll->clkr.regmap, PLL_STATUS(pll), &regval);
+	if (regval & TRION_PCAL_DONE)
+		return ret;
+
+	ret = clk_trion_pll_enable(hw);
+	if (ret)
+		return ret;
+
+	clk_trion_pll_disable(hw);
+
+	return 0;
+}
+
+static void clk_trion_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	int size, i, val;
+
+	static struct clk_register_data data[] = {
+		{"PLL_MODE", PLL_OFF_MODE},
+		{"PLL_L_VAL", PLL_OFF_L_VAL},
+		{"PLL_CAL_L_VAL", PLL_OFF_CAL_L_VAL},
+		{"PLL_USER_CTL", PLL_OFF_USER_CTL},
+		{"PLL_USER_CTL_U", PLL_OFF_USER_CTL_U},
+		{"PLL_USER_CTL_U1", PLL_OFF_USER_CTL_U1},
+		{"PLL_CONFIG_CTL", PLL_OFF_CONFIG_CTL},
+		{"PLL_CONFIG_CTL_U", PLL_OFF_CONFIG_CTL_U},
+		{"PLL_CONFIG_CTL_U1", PLL_OFF_CONFIG_CTL_U1},
+		{"PLL_TEST_CTL", PLL_OFF_TEST_CTL},
+		{"PLL_TEST_CTL_U", PLL_OFF_TEST_CTL_U},
+		{"PLL_TEST_CTL_U1", PLL_OFF_TEST_CTL_U1},
+		{"PLL_STATUS", PLL_OFF_STATUS},
+		{"PLL_OPMODE", PLL_OFF_OPMODE},
+		{"PLL_ALPHA_VAL", PLL_OFF_ALPHA_VAL},
+	};
+
+	static struct clk_register_data data1[] = {
+		{"APSS_PLL_VOTE", 0x0},
+	};
+
+	size = ARRAY_SIZE(data);
+
+	for (i = 0; i < size; i++) {
+		regmap_read(pll->clkr.regmap, pll->offset +
+					pll->regs[data[i].offset], &val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n", data[i].name, val);
+	}
+
+	regmap_read(pll->clkr.regmap, pll->offset + pll->regs[data[0].offset],
+								&val);
+
+	if (val & PLL_FSM_ENA) {
+		regmap_read(pll->clkr.regmap, pll->clkr.enable_reg +
+				data1[0].offset, &val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n", data1[0].name, val);
+	}
+}
+
+const struct clk_ops clk_alpha_pll_trion_ops = {
+	.prepare = clk_trion_pll_prepare,
+	.enable = clk_trion_pll_enable,
+	.disable = clk_trion_pll_disable,
+	.is_enabled = clk_trion_pll_is_enabled,
+	.recalc_rate = clk_trion_pll_recalc_rate,
+	.round_rate = clk_alpha_pll_round_rate,
+	.set_rate = clk_trion_pll_set_rate,
+	.list_registers = clk_trion_pll_list_registers,
+	.bus_vote = clk_debug_bus_vote,
+};
+EXPORT_SYMBOL_GPL(clk_alpha_pll_trion_ops);
+
+const struct clk_ops clk_alpha_pll_fixed_trion_ops = {
+	.enable = clk_trion_pll_enable,
+	.disable = clk_trion_pll_disable,
+	.is_enabled = clk_trion_pll_is_enabled,
+	.recalc_rate = clk_trion_pll_recalc_rate,
+	.round_rate = clk_alpha_pll_round_rate,
+	.list_registers = clk_trion_pll_list_registers,
+	.bus_vote = clk_debug_bus_vote,
+};
+EXPORT_SYMBOL_GPL(clk_alpha_pll_fixed_trion_ops);
+
+static unsigned long
+clk_trion_pll_postdiv_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
+{
+	struct clk_alpha_pll_postdiv *pll = to_clk_alpha_pll_postdiv(hw);
+	struct regmap *regmap = pll->clkr.regmap;
+	u32 i, div = 1, val;
+
+	if (!pll->post_div_table) {
+		pr_err("Missing the post_div_table for the PLL\n");
+		return -EINVAL;
+	}
+
+	regmap_read(regmap, PLL_USER_CTL(pll), &val);
+
+	val >>= pll->post_div_shift;
+	val &= PLL_POST_DIV_MASK(pll);
+
+	for (i = 0; i < pll->num_post_div; i++) {
+		if (pll->post_div_table[i].val == val) {
+			div = pll->post_div_table[i].div;
+			break;
+		}
+	}
+
+	return (parent_rate / div);
+}
+
+static long
+clk_trion_pll_postdiv_round_rate(struct clk_hw *hw, unsigned long rate,
+				 unsigned long *prate)
+{
+	struct clk_alpha_pll_postdiv *pll = to_clk_alpha_pll_postdiv(hw);
+
+	return divider_round_rate(hw, rate, prate, pll->post_div_table,
+				  pll->width, CLK_DIVIDER_ROUND_CLOSEST);
+};
+
+static int
+clk_trion_pll_postdiv_set_rate(struct clk_hw *hw, unsigned long rate,
+			       unsigned long parent_rate)
+{
+	struct clk_alpha_pll_postdiv *pll = to_clk_alpha_pll_postdiv(hw);
+	struct regmap *regmap = pll->clkr.regmap;
+	int i, val = 0, div;
+
+	if (!pll->post_div_table) {
+		pr_err("Missing the post_div_table for the PLL\n");
+		return -EINVAL;
+	}
+
+	div = DIV_ROUND_UP_ULL(parent_rate, rate);
+	for (i = 0; i < pll->num_post_div; i++) {
+		if (pll->post_div_table[i].div == div) {
+			val = pll->post_div_table[i].val;
+			break;
+		}
+	}
+
+	return regmap_update_bits(regmap, PLL_USER_CTL(pll),
+				  PLL_POST_DIV_MASK(pll) << pll->post_div_shift,
+				  val << pll->post_div_shift);
+}
+
+const struct clk_ops clk_alpha_pll_postdiv_trion_ops = {
+	.recalc_rate = clk_trion_pll_postdiv_recalc_rate,
+	.round_rate = clk_trion_pll_postdiv_round_rate,
+	.set_rate = clk_trion_pll_postdiv_set_rate,
+};
+EXPORT_SYMBOL_GPL(clk_alpha_pll_postdiv_trion_ops);
+
+int clk_regera_pll_configure(struct clk_alpha_pll *pll, struct regmap *regmap,
+				const struct alpha_pll_config *config)
+{
+	u32 mode_regval;
+	int ret;
+
+	if (!config) {
+		pr_err("PLL configuration missing.\n");
+		return -EINVAL;
+	}
+
+	ret = regmap_read(regmap, PLL_MODE(pll), &mode_regval);
+	if (ret)
+		return ret;
+
+	if (mode_regval & PLL_LOCK_DET) {
+		pr_warn("PLL is already enabled. Skipping configuration.\n");
+		return 0;
+	}
+
+	if (config->alpha)
+		regmap_write(regmap, PLL_ALPHA_VAL(pll), config->alpha);
+
+	if (config->l)
+		regmap_write(regmap, PLL_L_VAL(pll), config->l);
+
+	if (config->config_ctl_val)
+		regmap_write(regmap, PLL_CONFIG_CTL(pll),
+						config->config_ctl_val);
+
+	if (config->config_ctl_hi_val)
+		regmap_write(regmap, PLL_CONFIG_CTL_U(pll),
+						config->config_ctl_hi_val);
+
+	if (config->config_ctl_hi1_val)
+		regmap_write(regmap, PLL_CONFIG_CTL_U1(pll),
+						config->config_ctl_hi1_val);
+
+	if (config->user_ctl_val)
+		regmap_write(regmap, PLL_USER_CTL(pll), config->user_ctl_val);
+
+	if (config->test_ctl_val)
+		regmap_write(regmap, PLL_TEST_CTL(pll), config->test_ctl_val);
+
+	if (config->test_ctl_hi_val)
+		regmap_write(regmap, PLL_TEST_CTL_U(pll),
+						config->test_ctl_hi_val);
+
+	if (config->test_ctl_hi1_val)
+		regmap_write(regmap, PLL_TEST_CTL_U1(pll),
+						config->test_ctl_hi1_val);
+
+	/* Set operation mode to OFF */
+	regmap_write(regmap, PLL_OPMODE(pll), PLL_OPMODE_STANDBY);
+
+	return 0;
+}
+EXPORT_SYMBOL(clk_regera_pll_configure);
+
+static int clk_regera_pll_enable(struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	u32 val, l_val;
+	int ret;
+
+	ret = regmap_read(pll->clkr.regmap, PLL_MODE(pll), &val);
+	if (ret)
+		return ret;
+
+	/* If in FSM mode, just vote for it */
+	if (val & PLL_VOTE_FSM_ENA) {
+		ret = clk_enable_regmap(hw);
+		if (ret)
+			return ret;
+		return wait_for_pll_enable_active(pll);
+	}
+
+	ret = regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l_val);
+	if (ret)
+		return ret;
+
+	/* PLL has lost it's L value, needs reconfiguration */
+	if (!l_val) {
+		ret = clk_regera_pll_configure(pll, pll->clkr.regmap,
+						pll->config);
+		if (ret) {
+			pr_err("Failed to configure %s\n", clk_hw_get_name(hw));
+			return ret;
+		}
+		pr_warn("%s: PLL configuration lost, reconfiguration of PLL done.\n",
+				clk_hw_get_name(hw));
+	}
+
+	/* Get the PLL out of bypass mode */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+						PLL_BYPASSNL, PLL_BYPASSNL);
+	if (ret)
+		return ret;
+
+	/*
+	 * H/W requires a 1us delay between disabling the bypass and
+	 * de-asserting the reset.
+	 */
+	mb();
+	udelay(1);
+
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+						 PLL_RESET_N, PLL_RESET_N);
+	if (ret)
+		return ret;
+
+	/* Set operation mode to RUN */
+	regmap_write(pll->clkr.regmap, PLL_OPMODE(pll), PLL_OPMODE_RUN);
+
+	ret = wait_for_pll_enable_lock(pll);
+	if (ret)
+		return ret;
+
+	/* Enable the PLL outputs */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_USER_CTL(pll),
+				ZONDA_PLL_OUT_MASK, ZONDA_PLL_OUT_MASK);
+	if (ret)
+		return ret;
+
+	/* Enable the global PLL outputs */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+				 PLL_OUTCTRL, PLL_OUTCTRL);
+	if (ret)
+		return ret;
+
+	/* Ensure that the write above goes through before returning. */
+	mb();
+	return ret;
+}
+
+static void clk_regera_pll_disable(struct clk_hw *hw)
+{
+	int ret;
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	u32 val, mask;
+
+	ret = regmap_read(pll->clkr.regmap, PLL_MODE(pll), &val);
+	if (ret)
+		return;
+
+	/* If in FSM mode, just unvote it */
+	if (val & PLL_VOTE_FSM_ENA) {
+		clk_disable_regmap(hw);
+		return;
+	}
+
+	/* Disable the global PLL output */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll),
+							PLL_OUTCTRL, 0);
+	if (ret)
+		return;
+
+	/* Disable the PLL outputs */
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_USER_CTL(pll),
+					ZONDA_PLL_OUT_MASK, 0);
+
+	/* Put the PLL in bypass and reset */
+	mask = PLL_RESET_N | PLL_BYPASSNL;
+	ret = regmap_update_bits(pll->clkr.regmap, PLL_MODE(pll), mask, 0);
+	if (ret)
+		return;
+
+	/* Place the PLL mode in OFF state */
+	regmap_write(pll->clkr.regmap, PLL_OPMODE(pll), PLL_OPMODE_STANDBY);
+}
+
+static int clk_regera_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+				  unsigned long prate)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	unsigned long rrate;
+	u32 l, regval, alpha_width = pll_alpha_width(pll);
+	u64 a;
+	int ret;
+
+	ret = regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
+	if (ret)
+		return ret;
+
+	/* PLL has lost it's L value, needs reconfiguration */
+	if (!l) {
+		ret = clk_regera_pll_configure(pll, pll->clkr.regmap,
+						pll->config);
+		if (ret) {
+			pr_err("Failed to configure %s\n", clk_hw_get_name(hw));
+			return ret;
+		}
+		pr_warn("%s: PLL configuration lost, reconfiguration of PLL done.\n",
+				clk_hw_get_name(hw));
+	}
+
+	rrate = alpha_pll_round_rate(rate, prate, &l, &a, alpha_width);
+	/*
+	 * Due to a limited number of bits for fractional rate programming, the
+	 * rounded up rate could be marginally higher than the requested rate.
+	 */
+	if (rrate > (rate + PLL_OUT_RATE_MARGIN) || rrate < rate) {
+		pr_err("Call set rate on the PLL with rounded rates!\n");
+		return -EINVAL;
+	}
+
+	regmap_write(pll->clkr.regmap, PLL_ALPHA_VAL(pll), a);
+	regmap_write(pll->clkr.regmap, PLL_L_VAL(pll), l);
+
+	/* Return early if the PLL is disabled */
+	ret = regmap_read(pll->clkr.regmap, PLL_OPMODE(pll), &regval);
+	if (ret)
+		return ret;
+
+	if (regval == PLL_OPMODE_STANDBY)
+		return 0;
+
+	/* Wait before polling for the frequency latch */
+	udelay(5);
+
+	ret = wait_for_pll_enable_lock(pll);
+	if (ret)
+		return ret;
+
+	/* Wait for PLL output to stabilize */
+	udelay(100);
+	return 0;
+}
+
+static unsigned long
+clk_regera_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	u32 l, frac, alpha_width = pll_alpha_width(pll);
+
+	regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
+	regmap_read(pll->clkr.regmap, PLL_ALPHA_VAL(pll), &frac);
+
+	return alpha_pll_calc_rate(parent_rate, l, frac, alpha_width);
+}
+
+static void clk_regera_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	int size, i, val;
+
+	static struct clk_register_data data[] = {
+		{"PLL_MODE", PLL_OFF_MODE},
+		{"PLL_L_VAL", PLL_OFF_L_VAL},
+		{"PLL_ALPHA_VAL", PLL_OFF_ALPHA_VAL},
+		{"PLL_USER_CTL", PLL_OFF_USER_CTL},
+		{"PLL_CONFIG_CTL", PLL_OFF_CONFIG_CTL},
+		{"PLL_CONFIG_CTL_U", PLL_OFF_CONFIG_CTL_U},
+		{"PLL_CONFIG_CTL_U1", PLL_OFF_CONFIG_CTL_U1},
+		{"PLL_TEST_CTL", PLL_OFF_TEST_CTL},
+		{"PLL_TEST_CTL_U", PLL_OFF_TEST_CTL_U},
+		{"PLL_TEST_CTL_U1", PLL_OFF_TEST_CTL_U1},
+		{"PLL_OPMODE", PLL_OFF_OPMODE},
+		{"PLL_STATUS", PLL_OFF_STATUS},
+	};
+
+	static struct clk_register_data data1[] = {
+		{"APSS_PLL_VOTE", 0x0},
+	};
+
+
+	size = ARRAY_SIZE(data);
+
+	for (i = 0; i < size; i++) {
+		regmap_read(pll->clkr.regmap, pll->offset +
+					pll->regs[data[i].offset], &val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n", data[i].name, val);
+	}
+
+	regmap_read(pll->clkr.regmap, pll->offset + pll->regs[data[0].offset],
+								&val);
+	if (val & PLL_FSM_ENA) {
+		regmap_read(pll->clkr.regmap, pll->clkr.enable_reg +
+				data1[0].offset, &val);
+		clock_debug_output(f, false, "%20s: 0x%.8x\n", data1[0].name, val);
+	}
+}
+
+const struct clk_ops clk_alpha_pll_regera_ops = {
+	.enable = clk_regera_pll_enable,
+	.disable = clk_regera_pll_disable,
+	.is_enabled = clk_alpha_pll_is_enabled,
+	.recalc_rate = clk_regera_pll_recalc_rate,
+	.round_rate = clk_alpha_pll_round_rate,
+	.set_rate = clk_regera_pll_set_rate,
+	.list_registers = clk_regera_pll_list_registers,
+	.bus_vote = clk_debug_bus_vote,
+};
+EXPORT_SYMBOL_GPL(clk_alpha_pll_regera_ops);

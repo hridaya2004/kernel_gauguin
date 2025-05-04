@@ -1455,9 +1455,8 @@ void rndis_ipa_cleanup(void *private)
 	rndis_ipa_debugfs_destroy(rndis_ipa_ctx);
 	RNDIS_IPA_DEBUG("debugfs remove was done\n");
 
-	RNDIS_IPA_DEBUG("RNDIS_IPA netdev unregistered started\n");
 	unregister_netdev(rndis_ipa_ctx->net);
-	RNDIS_IPA_DEBUG("RNDIS_IPA netdev unregistered completed\n");
+	RNDIS_IPA_DEBUG("netdev unregistered\n");
 
 	spin_lock_irqsave(&rndis_ipa_ctx->state_lock, flags);
 	next_state = rndis_ipa_next_state(rndis_ipa_ctx->state,

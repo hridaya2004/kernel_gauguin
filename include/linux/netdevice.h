@@ -52,7 +52,6 @@
 #include <uapi/linux/if_bonding.h>
 #include <uapi/linux/pkt_cls.h>
 #include <linux/hashtable.h>
-#include <linux/android_kabi.h>
 
 struct netpoll_info;
 struct device;
@@ -261,11 +260,9 @@ struct hh_cache {
  * relationship HH alignment <= LL alignment.
  */
 #define LL_RESERVED_SPACE(dev) \
-	((((dev)->hard_header_len + READ_ONCE((dev)->needed_headroom)) \
-	  & ~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
+	((((dev)->hard_header_len+(dev)->needed_headroom)&~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
 #define LL_RESERVED_SPACE_EXTRA(dev,extra) \
-	((((dev)->hard_header_len + READ_ONCE((dev)->needed_headroom) + (extra)) \
-	  & ~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
+	((((dev)->hard_header_len+(dev)->needed_headroom+(extra))&~(HH_DATA_MOD - 1)) + HH_DATA_MOD)
 
 struct header_ops {
 	int	(*create) (struct sk_buff *skb, struct net_device *dev,
@@ -277,9 +274,7 @@ struct header_ops {
 				const struct net_device *dev,
 				const unsigned char *haddr);
 	bool	(*validate)(const char *ll_header, unsigned int len);
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
+	__be16	(*parse_protocol)(const struct sk_buff *skb);
 };
 
 /* These flag bits are private to the generic network queueing
@@ -345,11 +340,6 @@ struct napi_struct {
 	struct list_head	dev_list;
 	struct hlist_node	napi_hash_node;
 	unsigned int		napi_id;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 enum {
@@ -609,11 +599,6 @@ struct netdev_queue {
 #ifdef CONFIG_BQL
 	struct dql		dql;
 #endif
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } ____cacheline_aligned_in_smp;
 
 extern int sysctl_fb_tunnels_only_for_init_net;
@@ -708,11 +693,8 @@ static inline void rps_record_sock_flow(struct rps_sock_flow_table *table,
 		/* We only give a hint, preemption can change CPU under us */
 		val |= raw_smp_processor_id();
 
-		/* The following WRITE_ONCE() is paired with the READ_ONCE()
-		 * here, and another one in get_rps_cpu().
-		 */
-		if (READ_ONCE(table->ents[index]) != val)
-			WRITE_ONCE(table->ents[index], val);
+		if (table->ents[index] != val)
+			table->ents[index] = val;
 	}
 }
 
@@ -731,11 +713,6 @@ struct netdev_rx_queue {
 	struct kobject			kobj;
 	struct net_device		*dev;
 	struct xdp_rxq_info		xdp_rxq;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } ____cacheline_aligned_in_smp;
 
 /*
@@ -912,11 +889,6 @@ struct xfrmdev_ops {
 	bool	(*xdo_dev_offload_ok) (struct sk_buff *skb,
 				       struct xfrm_state *x);
 	void	(*xdo_dev_state_advance_esn) (struct xfrm_state *x);
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 #endif
 
@@ -939,10 +911,6 @@ struct tlsdev_ops {
 			    enum tls_offload_ctx_dir direction);
 	void (*tls_dev_resync_rx)(struct net_device *netdev,
 				  struct sock *sk, u32 seq, u64 rcd_sn);
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 #endif
 
@@ -1443,15 +1411,6 @@ struct net_device_ops {
 						u32 flags);
 	int			(*ndo_xsk_async_xmit)(struct net_device *dev,
 						      u32 queue_id);
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
-	ANDROID_KABI_RESERVE(5);
-	ANDROID_KABI_RESERVE(6);
-	ANDROID_KABI_RESERVE(7);
-	ANDROID_KABI_RESERVE(8);
 };
 
 /**
@@ -1687,6 +1646,7 @@ enum netdev_priv_flags {
  *	@tipc_ptr:	TIPC specific data
  *	@atalk_ptr:	AppleTalk link
  *	@ip_ptr:	IPv4 specific data
+ *	@dn_ptr:	DECnet specific data
  *	@ip6_ptr:	IPv6 specific data
  *	@ax25_ptr:	AX.25 specific data
  *	@ieee80211_ptr:	IEEE 802.11 specific data, assign before registering
@@ -1930,6 +1890,9 @@ struct net_device {
 	void 			*atalk_ptr;
 #endif
 	struct in_device __rcu	*ip_ptr;
+#if IS_ENABLED(CONFIG_DECNET)
+	struct dn_dev __rcu     *dn_ptr;
+#endif
 	struct inet6_dev __rcu	*ip6_ptr;
 #if IS_ENABLED(CONFIG_AX25)
 	void			*ax25_ptr;
@@ -2070,16 +2033,6 @@ struct net_device {
 	struct lock_class_key	*qdisc_running_key;
 	bool			proto_down;
 	unsigned		wol_enabled:1;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
-	ANDROID_KABI_RESERVE(5);
-	ANDROID_KABI_RESERVE(6);
-	ANDROID_KABI_RESERVE(7);
-	ANDROID_KABI_RESERVE(8);
-
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
 
@@ -2393,11 +2346,6 @@ struct packet_type {
 	struct net		*af_packet_net;
 	void			*af_packet_priv;
 	struct list_head	list;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 struct offload_callbacks {
@@ -2422,12 +2370,6 @@ struct pcpu_sw_netstats {
 	u64     tx_packets;
 	u64     tx_bytes;
 	struct u64_stats_sync   syncp;
-};
-
-struct pcpu_lstats {
-	u64 packets;
-	u64 bytes;
-	struct u64_stats_sync syncp;
 };
 
 #define __netdev_alloc_pcpu_stats(type, gfp)				\
@@ -2952,6 +2894,15 @@ static inline int dev_parse_header(const struct sk_buff *skb,
 	return dev->header_ops->parse(skb, haddr);
 }
 
+static inline __be16 dev_parse_header_protocol(const struct sk_buff *skb)
+{
+	const struct net_device *dev = skb->dev;
+
+	if (!dev->header_ops || !dev->header_ops->parse_protocol)
+		return 0;
+	return dev->header_ops->parse_protocol(skb);
+}
+
 /* ll_header must have at least hard_header_len allocated */
 static inline bool dev_validate_header(const struct net_device *dev,
 				       char *ll_header, int len)
@@ -3005,7 +2956,6 @@ struct softnet_data {
 	unsigned int		processed;
 	unsigned int		time_squeeze;
 	unsigned int		received_rps;
-	/* unused partner variable for ABI alignment */
 	unsigned int            gro_coalesced;
 
 #ifdef CONFIG_RPS
@@ -3704,7 +3654,7 @@ static __always_inline int ____dev_forward_skb(struct net_device *dev,
 		return NET_RX_DROP;
 	}
 
-	skb_scrub_packet(skb, !net_eq(dev_net(dev), dev_net(skb->dev)));
+	skb_scrub_packet(skb, true);
 	skb->priority = 0;
 	return 0;
 }
@@ -4129,24 +4079,6 @@ void __hw_addr_unsync_dev(struct netdev_hw_addr_list *list,
 void __hw_addr_init(struct netdev_hw_addr_list *list);
 
 /* Functions used for device addresses handling */
-static inline void
-__dev_addr_set(struct net_device *dev, const u8 *addr, size_t len)
-{
-	memcpy(dev->dev_addr, addr, len);
-}
-
-static inline void dev_addr_set(struct net_device *dev, const u8 *addr)
-{
-	__dev_addr_set(dev, addr, dev->addr_len);
-}
-
-static inline void
-dev_addr_mod(struct net_device *dev, unsigned int offset,
-	     const u8 *addr, size_t len)
-{
-	memcpy(&dev->dev_addr[offset], addr, len);
-}
-
 int dev_addr_add(struct net_device *dev, const unsigned char *addr,
 		 unsigned char addr_type);
 int dev_addr_del(struct net_device *dev, const unsigned char *addr,

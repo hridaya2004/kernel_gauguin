@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifdef CONFIG_DEBUG_FS
@@ -97,8 +97,10 @@ const char *ipa3_hdr_proc_type_name[] = {
 	__stringify(IPA_HDR_PROC_ETHII_TO_ETHII_EX),
 };
 
+#define MAX_DBG_BUFF_SZ		4096
+
 static struct dentry *dent;
-static char dbg_buff[IPA_MAX_MSG_LEN + 1];
+static char *dbg_buff;
 static char *active_clients_buf;
 
 static s8 ep_reg_idx;
@@ -149,10 +151,10 @@ static ssize_t ipa3_write_ep_holb(struct file *file,
 	unsigned long missing;
 	char *sptr, *token;
 
-	if (count >= sizeof(dbg_buff))
+	if (count >= MAX_DBG_BUFF_SZ)
 		return -EFAULT;
 
-	missing = copy_from_user(dbg_buff, buf, count);
+	missing = ipa_safe_copy_from_user(dbg_buff, buf, count);
 	if (missing)
 		return -EFAULT;
 
@@ -1249,10 +1251,8 @@ static ssize_t ipa3_read_stats(struct file *file, char __user *ubuf,
 		"lan_rx_empty=%u\n"
 		"lan_repl_rx_empty=%u\n"
 		"flow_enable=%u\n"
-		"flow_disable=%u\n"
-		"rx_page_drop_cnt=%u\n"
-		"zero_len_frag_pkt_cnt=%u\n",
-		"lower_order=%u\n",
+		"flow_disable=%u\n",
+		"rx_page_drop_cnt=%u\n",
 		ipa3_ctx->stats.tx_sw_pkts,
 		ipa3_ctx->stats.tx_hw_pkts,
 		ipa3_ctx->stats.tx_non_linear,
@@ -1269,9 +1269,7 @@ static ssize_t ipa3_read_stats(struct file *file, char __user *ubuf,
 		ipa3_ctx->stats.lan_repl_rx_empty,
 		ipa3_ctx->stats.flow_enable,
 		ipa3_ctx->stats.flow_disable,
-		ipa3_ctx->stats.rx_page_drop_cnt,
-		ipa3_ctx->stats.zero_len_frag_pkt_cnt,
-		ipa3_ctx->stats.lower_order);
+		ipa3_ctx->stats.rx_page_drop_cnt);
 	cnt += nbytes;
 
 	for (i = 0; i < IPAHAL_PKT_STATUS_EXCEPTION_MAX; i++) {
@@ -2855,6 +2853,10 @@ void ipa3_debugfs_init(void)
 		return;
 	}
 
+	dbg_buff = kmalloc(MAX_DBG_BUFF_SZ * sizeof(char), GFP_KERNEL);
+	if (!dbg_buff)
+		return;
+
 	file = debugfs_create_u32("hw_type", IPA_READ_ONLY_MODE,
 		dent, &ipa3_ctx->ipa_hw_type);
 	if (!file) {
@@ -2925,6 +2927,7 @@ void ipa3_debugfs_init(void)
 	return;
 
 fail:
+	kfree(dbg_buff);
 	debugfs_remove_recursive(dent);
 }
 
@@ -2939,6 +2942,9 @@ void ipa3_debugfs_remove(void)
 		active_clients_buf = NULL;
 	}
 	debugfs_remove_recursive(dent);
+	kfree(dbg_buff);
+
+	ipa_debugfs_remove_stats();
 }
 
 struct dentry *ipa_debugfs_get_root(void)

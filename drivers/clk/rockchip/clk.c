@@ -272,7 +272,7 @@ static struct clk *rockchip_clk_register_frac_branch(
 
 	if (child) {
 		struct clk_mux *frac_mux = &frac->mux;
-		struct clk_init_data init = {};
+		struct clk_init_data init;
 		struct clk *mux_clk;
 		int ret;
 
@@ -444,13 +444,12 @@ void __init rockchip_clk_register_branches(
 				      struct rockchip_clk_branch *list,
 				      unsigned int nr_clk)
 {
-	struct clk *clk;
+	struct clk *clk = NULL;
 	unsigned int idx;
 	unsigned long flags;
 
 	for (idx = 0; idx < nr_clk; idx++, list++) {
 		flags = list->flags;
-		clk = NULL;
 
 		/* catch simple muxes */
 		switch (list->branch_type) {

@@ -177,10 +177,9 @@ unsigned int sysctl_sched_min_task_util_for_boost = 51;
 unsigned int sysctl_sched_min_task_util_for_colocation = 35;
 __read_mostly unsigned int sysctl_sched_prefer_spread;
 unsigned int sysctl_walt_rtg_cfs_boost_prio = 99; /* disabled by default */
-unsigned int sysctl_walt_low_latency_task_threshold; /* disabled by default */
+unsigned int sysctl_walt_low_latency_task_boost; /* disabled by default */
 #endif
 unsigned int sched_small_task_threshold = 102;
-__read_mostly unsigned int sysctl_sched_force_lb_enable = 1;
 
 static inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {
@@ -293,8 +292,7 @@ static u64 __calc_delta(u64 delta_exec, unsigned long weight, struct load_weight
 		}
 	}
 
-	/* hint to use a 32x32->64 mul */
-	fact = (u64)(u32)fact * lw->inv_weight;
+	fact = mul_u32_u32(fact, lw->inv_weight);
 
 	while (fact >> 32) {
 		fact >>= 1;
@@ -4048,7 +4046,7 @@ static inline void update_misfit_status(struct task_struct *p, struct rq *rq)
 	if (!static_branch_unlikely(&sched_asym_cpucapacity))
 		return;
 
-	if (!p || p->nr_cpus_allowed == 1) {
+	if (!p) {
 		rq->misfit_task_load = 0;
 		return;
 	}
@@ -4107,29 +4105,6 @@ static void check_spread(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #endif
 }
 
-static inline bool entity_is_long_sleeper(struct sched_entity *se)
-{
-	struct cfs_rq *cfs_rq;
-	u64 sleep_time;
-
-	if (se->exec_start == 0)
-		return false;
-
-	cfs_rq = cfs_rq_of(se);
-
-	sleep_time = rq_clock_task(rq_of(cfs_rq));
-
-	/* Happen while migrating because of clock task divergence */
-	if (sleep_time <= se->exec_start)
-		return false;
-
-	sleep_time -= se->exec_start;
-	if (sleep_time > ((1ULL << 63) / scale_load_down(NICE_0_LOAD)))
-		return true;
-
-	return false;
-}
-
 static void
 place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 {
@@ -4171,29 +4146,8 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int initial)
 #endif
 	}
 
-	/*
-	 * Pull vruntime of the entity being placed to the base level of
-	 * cfs_rq, to prevent boosting it if placed backwards.
-	 * However, min_vruntime can advance much faster than real time, with
-	 * the extreme being when an entity with the minimal weight always runs
-	 * on the cfs_rq. If the waking entity slept for a long time, its
-	 * vruntime difference from min_vruntime may overflow s64 and their
-	 * comparison may get inversed, so ignore the entity's original
-	 * vruntime in that case.
-	 * The maximal vruntime speedup is given by the ratio of normal to
-	 * minimal weight: scale_load_down(NICE_0_LOAD) / MIN_SHARES.
-	 * When placing a migrated waking entity, its exec_start has been set
-	 * from a different rq. In order to take into account a possible
-	 * divergence between new and prev rq's clocks task because of irq and
-	 * stolen time, we take an additional margin.
-	 * So, cutting off on the sleep time of
-	 *     2^63 / scale_load_down(NICE_0_LOAD) ~ 104 days
-	 * should be safe.
-	 */
-	if (entity_is_long_sleeper(se))
-		se->vruntime = vruntime;
-	else
-		se->vruntime = max_vruntime(se->vruntime, vruntime);
+	/* ensure we never gain time by being placed backwards. */
+	se->vruntime = max_vruntime(se->vruntime, vruntime);
 }
 
 static void check_enqueue_throttle(struct cfs_rq *cfs_rq);
@@ -4288,9 +4242,6 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 
 	if (flags & ENQUEUE_WAKEUP)
 		place_entity(cfs_rq, se, 0);
-	/* Entity has migrated, no longer consider this task hot */
-	if (flags & ENQUEUE_MIGRATED)
-		se->exec_start = 0;
 
 	check_schedstat_required();
 	update_stats_enqueue(cfs_rq, se, flags);
@@ -4668,9 +4619,9 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static inline u64 cfs_rq_clock_task(struct cfs_rq *cfs_rq)
 {
 	if (unlikely(cfs_rq->throttle_count))
-		return cfs_rq->throttled_clock_pelt - cfs_rq->throttled_clock_pelt_time;
+		return cfs_rq->throttled_clock_task - cfs_rq->throttled_clock_task_time;
 
-	return rq_clock_task(rq_of(cfs_rq)) - cfs_rq->throttled_clock_pelt_time;
+	return rq_clock_task(rq_of(cfs_rq)) - cfs_rq->throttled_clock_task_time;
 }
 
 /* returns 0 on failure to allocate runtime */
@@ -4765,8 +4716,8 @@ static int tg_unthrottle_up(struct task_group *tg, void *data)
 	cfs_rq->throttle_count--;
 	if (!cfs_rq->throttle_count) {
 		/* adjust cfs_rq_clock_task() */
-		cfs_rq->throttled_clock_pelt_time += rq_clock_pelt(rq) -
-					     cfs_rq->throttled_clock_pelt;
+		cfs_rq->throttled_clock_task_time += rq_clock_task(rq) -
+					     cfs_rq->throttled_clock_task;
 
 		/* Add cfs_rq with already running entity in the list */
 		if (cfs_rq->nr_running >= 1)
@@ -4783,7 +4734,7 @@ static int tg_throttle_down(struct task_group *tg, void *data)
 
 	/* group is entering throttled state, stop time */
 	if (!cfs_rq->throttle_count) {
-		cfs_rq->throttled_clock_pelt = rq_clock_pelt(rq);
+		cfs_rq->throttled_clock_task = rq_clock_task(rq);
 		list_del_leaf_cfs_rq(cfs_rq);
 	}
 	cfs_rq->throttle_count++;
@@ -5173,7 +5124,7 @@ static void sync_throttle(struct task_group *tg, int cpu)
 	pcfs_rq = tg->parent->cfs_rq[cpu];
 
 	cfs_rq->throttle_count = pcfs_rq->throttle_count;
-	cfs_rq->throttled_clock_pelt = rq_clock_pelt(cpu_rq(cpu));
+	cfs_rq->throttled_clock_task = rq_clock_task(cpu_rq(cpu));
 }
 
 /* conditionally throttle active cfs_rq's from put_prev_entity() */
@@ -5520,7 +5471,6 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &p->se;
-	int task_new = !(flags & ENQUEUE_WAKEUP);
 
 	/*
 	 * The code below (indirectly) updates schedutil which looks at
@@ -5608,7 +5558,7 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		 * into account, but that is not straightforward to implement,
 		 * and the following generally works well enough in practice.
 		 */
-		if (!task_new)
+		if (flags & ENQUEUE_WAKEUP)
 			update_overutilized_status(rq);
 	}
 
@@ -6205,20 +6155,15 @@ schedtune_margin(unsigned long signal, long boost)
 	return margin;
 }
 
-inline long
-schedtune_cpu_margin_with(unsigned long util, int cpu, struct task_struct *p)
+static inline int
+schedtune_cpu_margin(unsigned long util, int cpu)
 {
-	int boost = schedtune_cpu_boost_with(cpu, p);
-	long margin;
+	int boost = schedtune_cpu_boost(cpu);
 
 	if (boost == 0)
-		margin = 0;
-	else
-		margin = schedtune_margin(util, boost);
+		return 0;
 
-	trace_sched_boost_cpu(cpu, util, margin);
-
-	return margin;
+	return schedtune_margin(util, boost);
 }
 
 long schedtune_task_margin(struct task_struct *task)
@@ -6242,7 +6187,7 @@ stune_util(int cpu, unsigned long other_util,
 {
 	unsigned long util = min_t(unsigned long, SCHED_CAPACITY_SCALE,
 				   cpu_util_freq(cpu, walt_load) + other_util);
-	long margin = schedtune_cpu_margin_with(util, cpu, NULL);
+	long margin = schedtune_cpu_margin(util, cpu);
 
 	trace_sched_boost_cpu(cpu, util, margin);
 
@@ -6251,8 +6196,8 @@ stune_util(int cpu, unsigned long other_util,
 
 #else /* CONFIG_SCHED_TUNE */
 
-inline long
-schedtune_cpu_margin_with(unsigned long util, int cpu, struct task_struct *p)
+static inline int
+schedtune_cpu_margin(unsigned long util, int cpu)
 {
 	return 0;
 }
@@ -6593,10 +6538,12 @@ static int select_idle_core(struct task_struct *p, struct sched_domain *sd, int 
 		bool idle = true;
 
 		for_each_cpu(cpu, cpu_smt_mask(core)) {
-			cpumask_clear_cpu(cpu, cpus);
-			if (!available_idle_cpu(cpu))
+			if (!available_idle_cpu(cpu)) {
 				idle = false;
+				break;
+			}
 		}
+		cpumask_andnot(cpus, cpus, cpu_smt_mask(core));
 
 		if (idle)
 			return core;
@@ -6682,9 +6629,9 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, int t
 
 	time = local_clock();
 
-	cpumask_and(cpus, sched_domain_span(sd), &p->cpus_allowed);
+        cpumask_and(cpus, sched_domain_span(sd), &p->cpus_allowed);
 
-	for_each_cpu_wrap(cpu, cpus, target) {
+        for_each_cpu_wrap(cpu, cpus, target) {
 		if (!--nr)
 			return -1;
 		if (cpu_isolated(cpu))
@@ -7008,7 +6955,7 @@ static void find_best_target(struct sched_domain *sd, cpumask_t *cpus,
 	if (prefer_idle && boosted)
 		target_capacity = 0;
 
-	if (fbt_env->strict_max || p->in_iowait)
+	if (fbt_env->strict_max)
 		most_spare_wake_cap = LONG_MIN;
 
 	/* Find start CPU based on boost value */
@@ -7324,10 +7271,6 @@ static void find_best_target(struct sched_domain *sd, cpumask_t *cpus,
 
 		next_group_higher_cap = (capacity_orig_of(group_first_cpu(sg)) <
 			capacity_orig_of(group_first_cpu(sg->next)));
-
-		if (p->in_iowait && !next_group_higher_cap &&
-				most_spare_cap_cpu != -1)
-			break;
 
 		/*
 		 * If we've found a cpu, but the boost is ON_ALL we continue
@@ -8093,6 +8036,9 @@ static void migrate_task_rq_fair(struct task_struct *p, int new_cpu)
 	/* Tell new CPU we are migrated */
 	p->se.avg.last_update_time = 0;
 
+	/* We have migrated, no longer consider this task hot */
+	p->se.exec_start = 0;
+
 	update_scan_period(p, new_cpu);
 }
 
@@ -8770,10 +8716,6 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	 * don't allow pull boost task to smaller cores.
 	 */
 	if (!can_migrate_boosted_task(p, env->src_cpu, env->dst_cpu))
-		return 0;
-
-	if (p->in_iowait && is_min_capacity_cpu(env->dst_cpu) &&
-			!is_min_capacity_cpu(env->src_cpu))
 		return 0;
 
 	if (!cpumask_test_cpu(env->dst_cpu, &p->cpus_allowed)) {
@@ -10727,7 +10669,7 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 		.sd		= sd,
 		.dst_cpu	= this_cpu,
 		.dst_rq		= this_rq,
-		.dst_grpmask    = group_balance_mask(sd->groups),
+		.dst_grpmask    = sched_group_span(sd->groups),
 		.idle		= idle,
 		.loop_break	= sched_nr_migrate_break,
 		.cpus		= cpus,
@@ -11900,7 +11842,6 @@ static int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 	bool prefer_spread = prefer_spread_on_idle(this_cpu, true);
 	bool force_lb = (!is_min_capacity_cpu(this_cpu) &&
 				silver_has_big_tasks() &&
-				sysctl_sched_force_lb_enable &&
 				(atomic_read(&this_rq->nr_iowait) == 0));
 
 
@@ -12890,22 +12831,11 @@ static void walt_rotate_work_func(struct work_struct *work)
 {
 	struct walt_rotate_work *wr = container_of(work,
 					struct walt_rotate_work, w);
-	struct rq *src_rq = cpu_rq(wr->src_cpu), *dst_rq = cpu_rq(wr->dst_cpu);
-	unsigned long flags;
 
 	migrate_swap(wr->src_task, wr->dst_task, wr->dst_cpu, wr->src_cpu);
 
 	put_task_struct(wr->src_task);
 	put_task_struct(wr->dst_task);
-
-	local_irq_save(flags);
-	double_rq_lock(src_rq, dst_rq);
-
-	dst_rq->active_balance = 0;
-	src_rq->active_balance = 0;
-
-	double_rq_unlock(src_rq, dst_rq);
-	local_irq_restore(flags);
 
 	clear_reserved(wr->src_cpu);
 	clear_reserved(wr->dst_cpu);
@@ -12993,8 +12923,7 @@ static void walt_check_for_rotation(struct rq *src_rq)
 	dst_rq = cpu_rq(dst_cpu);
 
 	double_rq_lock(src_rq, dst_rq);
-	if (dst_rq->curr->sched_class == &fair_sched_class &&
-		!src_rq->active_balance && !dst_rq->active_balance) {
+	if (dst_rq->curr->sched_class == &fair_sched_class) {
 		get_task_struct(src_rq->curr);
 		get_task_struct(dst_rq->curr);
 
@@ -13007,10 +12936,7 @@ static void walt_check_for_rotation(struct rq *src_rq)
 
 		wr->src_cpu = src_cpu;
 		wr->dst_cpu = dst_cpu;
-		dst_rq->active_balance = 1;
-		src_rq->active_balance = 1;
 	}
-
 	double_rq_unlock(src_rq, dst_rq);
 
 	if (wr)

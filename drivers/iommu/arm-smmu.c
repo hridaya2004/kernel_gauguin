@@ -52,6 +52,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/hwspinlock.h>
 #include <soc/qcom/secure_buffer.h>
 #include <linux/of_platform.h>
 #include <linux/msm-bus.h>
@@ -59,7 +60,6 @@
 #include <dt-bindings/msm/msm-bus-ids.h>
 #include <linux/irq.h>
 #include <linux/wait.h>
-#include <linux/notifier.h>
 
 #include <linux/amba/bus.h>
 
@@ -267,7 +267,7 @@ struct arm_smmu_device {
 #define ARM_SMMU_OPT_STATIC_CB		(1 << 6)
 #define ARM_SMMU_OPT_DISABLE_ATOS	(1 << 7)
 #define ARM_SMMU_OPT_NO_DYNAMIC_ASID	(1 << 8)
-#define ARM_SMMU_OPT_HALT		(1 << 9)
+#define ARM_SMMU_OPT_MMU500_ERRATA1	(1 << 9)
 	u32				options;
 	enum arm_smmu_arch_version	version;
 	enum arm_smmu_implementation	model;
@@ -275,7 +275,6 @@ struct arm_smmu_device {
 	u32				num_context_banks;
 	u32				num_s2_context_banks;
 	DECLARE_BITMAP(context_map, ARM_SMMU_MAX_CBS);
-	DECLARE_BITMAP(secure_context_map, ARM_SMMU_MAX_CBS);
 	struct arm_smmu_cb		*cbs;
 	atomic_t			irptndx;
 
@@ -309,7 +308,6 @@ struct arm_smmu_device {
 	unsigned int			num_impl_def_attach_registers;
 
 	struct arm_smmu_power_resources *pwr;
-	struct notifier_block		regulator_nb;
 
 	spinlock_t			atos_lock;
 
@@ -401,6 +399,9 @@ struct arm_smmu_domain {
 	struct list_head		nonsecure_pool;
 	struct iommu_debug_attachment	*logger;
 	struct iommu_domain		domain;
+
+	bool				qsmmuv500_errata1_init;
+	bool				qsmmuv500_errata1_client;
 };
 
 struct arm_smmu_option_prop {
@@ -420,6 +421,10 @@ struct qsmmuv500_archdata {
 	struct actlr_setting		*actlrs;
 	u32				actlr_tbl_size;
 	u32				testbus_version;
+	struct arm_smmu_smr		*errata1_clients;
+	u32				num_errata1_clients;
+	struct hwspinlock 		*errata1_lock;
+	ktime_t				last_tlbi_ktime;
 };
 #define get_qsmmuv500_archdata(smmu)				\
 	((struct qsmmuv500_archdata *)(smmu->archdata))
@@ -454,7 +459,7 @@ static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_STATIC_CB, "qcom,enable-static-cb"},
 	{ ARM_SMMU_OPT_DISABLE_ATOS, "qcom,disable-atos" },
 	{ ARM_SMMU_OPT_NO_DYNAMIC_ASID, "qcom,no-dynamic-asid" },
-	{ ARM_SMMU_OPT_HALT, "qcom,enable-smmu-halt"},
+	{ ARM_SMMU_OPT_MMU500_ERRATA1, "qcom,mmu500-errata-1" },
 	{ 0, NULL},
 };
 
@@ -477,6 +482,7 @@ static int arm_smmu_enable_s1_translations(struct arm_smmu_domain *smmu_domain);
 static int arm_smmu_alloc_cb(struct iommu_domain *domain,
 				struct arm_smmu_device *smmu,
 				struct device *dev);
+static struct iommu_gather_ops qsmmuv500_errata1_smmu_gather_ops;
 
 static bool arm_smmu_is_static_cb(struct arm_smmu_device *smmu);
 static bool arm_smmu_is_master_side_secure(struct arm_smmu_domain *smmu_domain);
@@ -2597,6 +2603,9 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 		(smmu->model == QCOM_SMMUV500))
 		quirks |= IO_PGTABLE_QUIRK_QSMMUV500_NON_SHAREABLE;
 
+	if (smmu->options & ARM_SMMU_OPT_MMU500_ERRATA1)
+		smmu_domain->tlb_ops = &qsmmuv500_errata1_smmu_gather_ops;
+
 	if (arm_smmu_is_slave_side_secure(smmu_domain))
 		smmu_domain->tlb_ops = &msm_smmu_gather_ops;
 
@@ -2790,11 +2799,6 @@ static void arm_smmu_destroy_domain_context(struct iommu_domain *domain)
 	arm_smmu_unassign_table(smmu_domain);
 	arm_smmu_secure_domain_unlock(smmu_domain);
 	__arm_smmu_free_bitmap(smmu->context_map, cfg->cbndx);
-	/* As the nonsecure context bank index is any way set to zero,
-	 * so, directly clearing up the secure cb bitmap.
-	 */
-	if (arm_smmu_is_slave_side_secure(smmu_domain))
-		__arm_smmu_free_bitmap(smmu->secure_context_map, cfg->cbndx);
 
 	arm_smmu_power_off(smmu->pwr);
 	arm_smmu_domain_reinit(smmu_domain);
@@ -3926,46 +3930,6 @@ static size_t msm_secure_smmu_map_sg(struct iommu_domain *domain,
 	return ret;
 }
 
-void *get_smmu_from_addr(struct iommu_device *iommu, void __iomem *addr)
-{
-	struct arm_smmu_device *smmu = NULL;
-	unsigned long base, mask;
-
-	smmu = arm_smmu_get_by_fwnode(iommu->fwnode);
-	if (!smmu)
-		return NULL;
-
-	base = (unsigned long)smmu->base;
-	mask = ~(smmu->size - 1);
-
-	if ((base & mask) == ((unsigned long)addr & mask))
-		return (void *)smmu;
-
-	return NULL;
-}
-
-bool arm_smmu_skip_write(void __iomem *addr)
-{
-	struct arm_smmu_device *smmu;
-	int cb;
-
-	smmu = arm_smmu_get_by_addr(addr);
-
-	/* Skip write if smmu not available by now */
-	if (!smmu)
-		return true;
-
-	/* Do not write to global space */
-	if (((unsigned long)addr & (smmu->size - 1)) < (smmu->size >> 1))
-		return true;
-
-	/* Finally skip writing to secure CB */
-	cb = ((unsigned long)addr & ((smmu->size >> 1) - 1)) >> PAGE_SHIFT;
-	if (test_bit(cb, smmu->secure_context_map))
-		return true;
-
-	return false;
-}
 #endif
 
 static int arm_smmu_add_device(struct device *dev)
@@ -5006,12 +4970,8 @@ static int arm_smmu_alloc_cb(struct iommu_domain *domain,
 			cb = smmu->s2crs[idx].cbndx;
 	}
 
-	if (cb >= 0 && arm_smmu_is_static_cb(smmu)) {
+	if (cb >= 0 && arm_smmu_is_static_cb(smmu))
 		smmu_domain->slave_side_secure = true;
-
-		if (arm_smmu_is_slave_side_secure(smmu_domain))
-			bitmap_set(smmu->secure_context_map, cb, 1);
-	}
 
 	if (cb < 0 && !arm_smmu_is_static_cb(smmu)) {
 		mutex_unlock(&smmu->stream_map_mutex);
@@ -5163,71 +5123,6 @@ static int arm_smmu_init_clocks(struct arm_smmu_power_resources *pwr)
 		++i;
 	}
 	return 0;
-}
-
-static int regulator_notifier(struct notifier_block *nb,
-			      unsigned long event, void *data)
-{
-	int ret = 0;
-	struct arm_smmu_device *smmu = container_of(nb, struct arm_smmu_device,
-						    regulator_nb);
-
-	if (event != REGULATOR_EVENT_PRE_DISABLE &&
-	    event != REGULATOR_EVENT_ENABLE)
-		return NOTIFY_OK;
-
-	ret = arm_smmu_prepare_clocks(smmu->pwr);
-	if (ret)
-		goto out;
-
-	ret = arm_smmu_power_on_atomic(smmu->pwr);
-	if (ret)
-		goto unprepare_clock;
-
-	if (event == REGULATOR_EVENT_PRE_DISABLE)
-		qsmmuv2_halt(smmu);
-	else if (event == REGULATOR_EVENT_ENABLE) {
-		if (arm_smmu_restore_sec_cfg(smmu, 0))
-			goto power_off;
-		qsmmuv2_resume(smmu);
-	}
-power_off:
-	arm_smmu_power_off_atomic(smmu->pwr);
-unprepare_clock:
-	arm_smmu_unprepare_clocks(smmu->pwr);
-out:
-	return NOTIFY_OK;
-}
-
-static int register_regulator_notifier(struct arm_smmu_device *smmu)
-{
-	struct device *dev = smmu->dev;
-	struct regulator_bulk_data *consumers;
-	int ret = 0, num_consumers;
-	struct arm_smmu_power_resources *pwr = smmu->pwr;
-
-	if (!(smmu->options & ARM_SMMU_OPT_HALT))
-		goto out;
-
-	num_consumers = pwr->num_gdscs;
-	consumers = pwr->gdscs;
-
-	if (!num_consumers) {
-		dev_info(dev, "no regulator info exist for %s\n",
-			 dev_name(dev));
-		goto out;
-	}
-
-	smmu->regulator_nb.notifier_call = regulator_notifier;
-	/* registering the notifier against one gdsc is sufficient as
-	 * we do enable/disable regulators in group.
-	 */
-	ret = regulator_register_notifier(consumers[0].consumer,
-					  &smmu->regulator_nb);
-	if (ret)
-		dev_err(dev, "Regulator notifier request failed\n");
-out:
-	return ret;
 }
 
 static int arm_smmu_init_regulators(struct arm_smmu_power_resources *pwr)
@@ -5847,10 +5742,6 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 	if (!using_legacy_binding)
 		arm_smmu_bus_init();
 
-	err = register_regulator_notifier(smmu);
-	if (err)
-		goto out_power_off;
-
 	return 0;
 
 out_power_off:
@@ -5874,9 +5765,7 @@ static int arm_smmu_legacy_bus_init(void)
 		arm_smmu_bus_init();
 	return 0;
 }
-#ifndef MODULE
 device_initcall_sync(arm_smmu_legacy_bus_init);
-#endif
 
 static int arm_smmu_device_remove(struct platform_device *pdev)
 {
@@ -5888,8 +5777,7 @@ static int arm_smmu_device_remove(struct platform_device *pdev)
 	if (arm_smmu_power_on(smmu->pwr))
 		return -EINVAL;
 
-	if (!bitmap_empty(smmu->context_map, ARM_SMMU_MAX_CBS) ||
-	    !bitmap_empty(smmu->secure_context_map, ARM_SMMU_MAX_CBS))
+	if (!bitmap_empty(smmu->context_map, ARM_SMMU_MAX_CBS))
 		dev_err(&pdev->dev, "removing device with active domains!\n");
 
 	idr_destroy(&smmu->asid_idr);
@@ -6027,6 +5915,136 @@ static bool arm_smmu_fwspec_match_smr(struct iommu_fwspec *fwspec,
 	}
 	return false;
 }
+
+static bool qsmmuv500_errata1_required(struct arm_smmu_domain *smmu_domain,
+				 struct qsmmuv500_archdata *data)
+{
+	bool ret = false;
+	int j;
+	struct arm_smmu_smr *smr;
+	struct iommu_fwspec *fwspec;
+
+	if (smmu_domain->qsmmuv500_errata1_init)
+		return smmu_domain->qsmmuv500_errata1_client;
+
+	fwspec = smmu_domain->dev->iommu_fwspec;
+	for (j = 0; j < data->num_errata1_clients; j++) {
+		smr = &data->errata1_clients[j];
+		if (arm_smmu_fwspec_match_smr(fwspec, smr)) {
+			ret = true;
+			break;
+		}
+	}
+
+	smmu_domain->qsmmuv500_errata1_init = true;
+	smmu_domain->qsmmuv500_errata1_client = ret;
+	return ret;
+}
+
+#define SCM_CONFIG_ERRATA1_CLIENT_ALL 0x2
+#define SCM_CONFIG_ERRATA1 0x3
+static void __qsmmuv500_errata1_tlbiall(struct arm_smmu_domain *smmu_domain)
+{
+	struct arm_smmu_device *smmu = smmu_domain->smmu;
+	struct device *dev = smmu_domain->dev;
+	struct arm_smmu_cfg *cfg = &smmu_domain->cfg;
+	void __iomem *base;
+	int ret;
+	ktime_t cur;
+	u32 val;
+	struct scm_desc desc = {
+		.args[0] = SCM_CONFIG_ERRATA1_CLIENT_ALL,
+		.args[1] = false,
+		.arginfo = SCM_ARGS(2, SCM_VAL, SCM_VAL),
+	};
+
+	base = ARM_SMMU_CB(smmu, cfg->cbndx);
+	writel_relaxed(0, base + ARM_SMMU_CB_S1_TLBIALL);
+	writel_relaxed(0, base + ARM_SMMU_CB_TLBSYNC);
+	if (!readl_poll_timeout_atomic(base + ARM_SMMU_CB_TLBSTATUS, val,
+				      !(val & TLBSTATUS_SACTIVE), 0, 100))
+		return;
+
+	ret = scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_SMMU_PROGRAM,
+					    SCM_CONFIG_ERRATA1),
+			       &desc);
+	if (ret) {
+		dev_err(smmu->dev, "Calling into TZ to disable ERRATA1 failed - IOMMU hardware in bad state\n");
+		BUG();
+		return;
+	}
+
+	cur = ktime_get();
+	trace_tlbi_throttle_start(dev, 0);
+	msm_bus_noc_throttle_wa(true);
+
+	if (readl_poll_timeout_atomic(base + ARM_SMMU_CB_TLBSTATUS, val,
+			      !(val & TLBSTATUS_SACTIVE), 0, 10000)) {
+		dev_err(smmu->dev, "ERRATA1 TLBSYNC timeout - IOMMU hardware in bad state");
+		trace_tlbsync_timeout(dev, 0);
+		BUG();
+	}
+
+	msm_bus_noc_throttle_wa(false);
+	trace_tlbi_throttle_end(dev, ktime_us_delta(ktime_get(), cur));
+
+	desc.args[1] = true;
+	ret = scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_SMMU_PROGRAM,
+					    SCM_CONFIG_ERRATA1),
+			       &desc);
+	if (ret) {
+		dev_err(smmu->dev, "Calling into TZ to reenable ERRATA1 failed - IOMMU hardware in bad state\n");
+		BUG();
+	}
+}
+
+/* Must be called with clocks/regulators enabled */
+#define ERRATA1_TLBI_INTERVAL_US	10
+/* Timeout (ms) for the trylock of remote spinlocks */
+#define HWSPINLOCK_TIMEOUT	1000
+static void qsmmuv500_errata1_tlb_inv_context(void *cookie)
+{
+	struct arm_smmu_domain *smmu_domain = cookie;
+	struct device *dev = smmu_domain->dev;
+	struct qsmmuv500_archdata *data =
+			get_qsmmuv500_archdata(smmu_domain->smmu);
+	ktime_t cur;
+	unsigned long flags;
+	bool errata;
+	int ret;
+
+	cur = ktime_get();
+	trace_tlbi_start(dev, 0);
+
+	errata = qsmmuv500_errata1_required(smmu_domain, data);
+	ret = hwspin_lock_timeout_irqsave(data->errata1_lock,
+					    HWSPINLOCK_TIMEOUT, &flags);
+	if (ret)
+		WARN(1, "%s: get the hw lock failed", dev_name(dev));
+
+	if (errata) {
+		s64 delta;
+
+		delta = ktime_us_delta(ktime_get(), data->last_tlbi_ktime);
+		if (delta < ERRATA1_TLBI_INTERVAL_US)
+			udelay(ERRATA1_TLBI_INTERVAL_US - delta);
+
+		__qsmmuv500_errata1_tlbiall(smmu_domain);
+
+		data->last_tlbi_ktime = ktime_get();
+	} else {
+		__qsmmuv500_errata1_tlbiall(smmu_domain);
+	}
+	hwspin_unlock_irqrestore(data->errata1_lock, &flags);
+
+	trace_tlbi_end(dev, ktime_us_delta(ktime_get(), cur));
+}
+
+static struct iommu_gather_ops qsmmuv500_errata1_smmu_gather_ops = {
+	.tlb_flush_all	= qsmmuv500_errata1_tlb_inv_context,
+	.alloc_pages_exact = arm_smmu_alloc_pages_exact,
+	.free_pages_exact = arm_smmu_free_pages_exact,
+};
 
 static int qsmmuv500_tbu_halt(struct qsmmuv500_tbu_device *tbu,
 				struct arm_smmu_domain *smmu_domain)
@@ -6457,6 +6475,48 @@ static int qsmmuv500_tbu_register(struct device *dev, void *cookie)
 	INIT_LIST_HEAD(&tbu->list);
 	tbu->smmu = smmu;
 	list_add(&tbu->list, &data->tbus);
+	return 0;
+}
+
+static int qsmmuv500_parse_errata1(struct arm_smmu_device *smmu)
+{
+	int len, i, hwlock_id;
+	struct device *dev = smmu->dev;
+	struct qsmmuv500_archdata *data = get_qsmmuv500_archdata(smmu);
+	struct arm_smmu_smr *smrs;
+	const __be32 *cell;
+
+	cell = of_get_property(dev->of_node, "qcom,mmu500-errata-1", NULL);
+	if (!cell)
+		return 0;
+
+	hwlock_id = of_hwspin_lock_get_id(dev->of_node, 0);
+	if (hwlock_id < 0) {
+		if (hwlock_id != -EPROBE_DEFER)
+			dev_err(dev, "failed to retrieve hwlock\n");
+		return hwlock_id;
+	}
+
+	data->errata1_lock = hwspin_lock_request_specific(hwlock_id);
+	if (!data->errata1_lock)
+		return -ENXIO;
+
+	len = of_property_count_elems_of_size(
+			dev->of_node, "qcom,mmu500-errata-1", sizeof(u32) * 2);
+	if (len < 0)
+		return 0;
+
+	smrs = devm_kzalloc(dev, sizeof(*smrs) * len, GFP_KERNEL);
+	if (!smrs)
+		return -ENOMEM;
+
+	for (i = 0; i < len; i++) {
+		smrs[i].id = of_read_number(cell++, 1);
+		smrs[i].mask = of_read_number(cell++, 1);
+	}
+
+	data->errata1_clients = smrs;
+	data->num_errata1_clients = len;
 	return 0;
 }
 
@@ -7110,6 +7170,10 @@ static int qsmmuv500_arch_init(struct arm_smmu_device *smmu)
 	if (arm_smmu_is_static_cb(smmu))
 		return 0;
 
+	ret = qsmmuv500_parse_errata1(smmu);
+	if (ret)
+		return ret;
+
 	ret = qsmmuv500_read_actlr_tbl(smmu);
 	if (ret)
 		return ret;
@@ -7230,26 +7294,6 @@ static struct platform_driver qsmmuv500_tbu_driver = {
 	},
 	.probe	= qsmmuv500_tbu_probe,
 };
-
-static int __init arm_smmu_driver_init(void)
-{
-	int ret;
-
-	ret = platform_driver_register(&arm_smmu_driver);
-#ifdef MODULE
-	if (!ret)
-		arm_smmu_legacy_bus_init();
-#endif
-	return ret;
-}
-
-static void __exit arm_smmu_driver_exit(void)
-{
-	platform_driver_unregister(&arm_smmu_driver);
-}
-
-subsys_initcall(arm_smmu_driver_init);
-module_exit(arm_smmu_driver_exit);
 
 MODULE_DESCRIPTION("IOMMU API for ARM architected SMMU implementations");
 MODULE_AUTHOR("Will Deacon <will.deacon@arm.com>");

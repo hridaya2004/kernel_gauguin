@@ -26,7 +26,6 @@
 #include <linux/page_ref.h>
 #include <linux/memremap.h>
 #include <linux/overflow.h>
-#include <linux/android_kabi.h>
 
 struct mempolicy;
 struct anon_vma;
@@ -475,11 +474,6 @@ struct vm_operations_struct {
 	 */
 	struct page *(*find_special_page)(struct vm_area_struct *vma,
 					  unsigned long addr);
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 static inline void INIT_VMA(struct vm_area_struct *vma)
@@ -1499,12 +1493,6 @@ int generic_access_phys(struct vm_area_struct *vma, unsigned long addr,
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
 static inline void vm_write_begin(struct vm_area_struct *vma)
 {
-        /*
-         * Isolated vma might be freed without exclusive mmap_lock but
-         * speculative page fault handler still needs to know it was changed.
-         */
-        if (!RB_EMPTY_NODE(&vma->vm_rb))
-		WARN_ON_ONCE(!rwsem_is_locked(&(vma->vm_mm)->mmap_sem));
 	/*
 	 * The reads never spins and preemption
 	 * disablement is not required.
@@ -2479,8 +2467,6 @@ extern int install_special_mapping(struct mm_struct *mm,
 				   unsigned long addr, unsigned long len,
 				   unsigned long flags, struct page **pages);
 
-unsigned long randomize_page(unsigned long start, unsigned long range);
-
 extern unsigned long get_unmapped_area(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
 
 extern unsigned long mmap_region(struct file *file, unsigned long addr,
@@ -2570,7 +2556,7 @@ int __must_check write_one_page(struct page *page);
 void task_dirty_inc(struct task_struct *tsk);
 
 /* readahead.c */
-#define VM_MAX_READAHEAD	128	/* kbytes */
+#define VM_MAX_READAHEAD	512	/* kbytes */
 #define VM_MIN_READAHEAD	16	/* kbytes (includes current page) */
 
 int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
@@ -3050,7 +3036,7 @@ extern struct reclaim_param reclaim_task_anon(struct task_struct *task,
 extern struct reclaim_param reclaim_task_nomap(struct task_struct *task,
 		int nr_to_reclaim);
 extern int reclaim_address_space(struct address_space *mapping,
-		struct reclaim_param *rp);
+		struct reclaim_param *rp, struct vm_area_struct *vma);
 extern int proc_reclaim_notifier_register(struct notifier_block *nb);
 extern int proc_reclaim_notifier_unregister(struct notifier_block *nb);
 #endif

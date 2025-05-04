@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kthread.h>
 #include <linux/notifier.h>
-#include <linux/pagevec.h>
 #include <linux/shmem_fs.h>
-#include <linux/swap.h>
 
 #include "kgsl_reclaim.h"
 #include "kgsl_sharedmem.h"
@@ -195,32 +193,18 @@ ssize_t kgsl_proc_max_reclaim_limit_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", kgsl_reclaim_max_page_limit);
 }
 
-static void kgsl_release_page_vec(struct pagevec *pvec)
-{
-	check_move_unevictable_pages(pvec->pages, pvec->nr);
-	__pagevec_release(pvec);
-}
-
 static int kgsl_reclaim_callback(struct notifier_block *nb,
 		unsigned long pid, void *data)
 {
-	struct kgsl_process_private *p, *process = NULL;
+	struct kgsl_process_private *process;
 	struct kgsl_mem_entry *entry;
 	struct kgsl_memdesc *memdesc;
-	int valid_entry, next = 0, ret = NOTIFY_OK;
+	int valid_entry, next = 0, ret;
+	u64 mapsize;
 
-	spin_lock(&kgsl_driver.proclist_lock);
-	list_for_each_entry(p, &kgsl_driver.process_list, list) {
-		if ((unsigned long)p->pid == pid) {
-			if (kgsl_process_private_get(p))
-				process = p;
-			break;
-		}
-	}
-	spin_unlock(&kgsl_driver.proclist_lock);
-
+	process = kgsl_process_private_find(pid);
 	if (!process)
-		return ret;
+		return NOTIFY_OK;
 
 	/*
 	 * If we do not get the lock here, it means that the buffers are
@@ -274,42 +258,27 @@ static int kgsl_reclaim_callback(struct notifier_block *nb,
 
 		if (!kgsl_mmu_unmap(memdesc->pagetable, memdesc)) {
 			int i;
-			struct pagevec pvec;
 
-			/*
-			 * Pages that are first allocated are by default added
-			 * to unevictable list. To reclaim them, we first clear
-			 * the AS_UNEVICTABLE flag of the shmem file address
-			 * space thus check_move_unevictable_pages() places
-			 * them on the evictable list.
-			 *
-			 * Once reclaim is done, hint that further shmem
-			 * allocations will have to be on the unevictable list.
-			 */
-			mapping_clear_unevictable(
-					memdesc->shmem_filp->f_mapping);
-			pagevec_init(&pvec);
 			for (i = 0; i < memdesc->page_count; i++) {
 				set_page_dirty_lock(memdesc->pages[i]);
 				spin_lock(&memdesc->lock);
-				pagevec_add(&pvec, memdesc->pages[i]);
+				put_page(memdesc->pages[i]);
 				memdesc->pages[i] = NULL;
 				spin_unlock(&memdesc->lock);
-				if (pagevec_count(&pvec) == PAGEVEC_SIZE)
-					kgsl_release_page_vec(&pvec);
 			}
-			if (pagevec_count(&pvec))
-				kgsl_release_page_vec(&pvec);
 
 			memdesc->priv |= KGSL_MEMDESC_RECLAIMED;
 
 			ret = reclaim_address_space
-				(memdesc->shmem_filp->f_mapping, data);
+				(memdesc->shmem_filp->f_mapping,
+				data, memdesc->vma);
 
-			mapping_set_unevictable(memdesc->shmem_filp->f_mapping);
 			memdesc->reclaimed_page_count += memdesc->page_count;
 			atomic_add(memdesc->page_count,
 					&process->reclaimed_page_count);
+			mapsize = atomic_long_read(&memdesc->mapsize);
+			atomic_long_sub(mapsize, &memdesc->mapsize);
+			atomic_long_sub(mapsize, &process->gpumem_mapped);
 		}
 
 		kgsl_mem_entry_put(entry);

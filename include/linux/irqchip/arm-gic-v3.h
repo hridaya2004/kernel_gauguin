@@ -594,7 +594,6 @@ struct rdists {
 };
 
 struct irq_domain;
-void gic_show_pending_irqs(void);
 struct fwnode_handle;
 int its_cpu_init(void);
 int its_init(struct fwnode_handle *handle, struct rdists *rdists,
@@ -616,6 +615,8 @@ static inline bool gic_enable_sre(void)
 	return !!(val & ICC_SRE_EL1_SRE);
 }
 
+void gic_v3_dist_save(void);
+void gic_v3_dist_restore(void);
 #endif
 
 #endif

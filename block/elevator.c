@@ -209,13 +209,10 @@ int elevator_init(struct request_queue *q)
 	struct elevator_type *e = NULL;
 	int err = 0;
 
-	/*
-	 * q->sysfs_lock must be held to provide mutual exclusion between
-	 * elevator_switch() and here.
-	 */
-	mutex_lock(&q->sysfs_lock);
+	WARN_ON_ONCE(test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags));
+
 	if (unlikely(q->elevator))
-		goto out_unlock;
+		goto out;
 
 	if (*chosen_elevator) {
 		e = elevator_get(q, chosen_elevator, false);
@@ -235,8 +232,7 @@ int elevator_init(struct request_queue *q)
 	err = e->ops.sq.elevator_init_fn(q, e);
 	if (err)
 		elevator_put(e);
-out_unlock:
-	mutex_unlock(&q->sysfs_lock);
+out:
 	return err;
 }
 
@@ -840,12 +836,15 @@ static struct kobj_type elv_ktype = {
 	.release	= elevator_release,
 };
 
-int elv_register_queue(struct request_queue *q)
+/*
+ * elv_register_queue is called from either blk_register_queue or
+ * elevator_switch, elevator switch is prevented from being happen
+ * in the two paths, so it is safe to not hold q->sysfs_lock.
+ */
+int elv_register_queue(struct request_queue *q, bool uevent)
 {
 	struct elevator_queue *e = q->elevator;
 	int error;
-
-	lockdep_assert_held(&q->sysfs_lock);
 
 	error = kobject_add(&e->kobj, &q->kobj, "%s", "iosched");
 	if (!error) {
@@ -857,7 +856,9 @@ int elv_register_queue(struct request_queue *q)
 				attr++;
 			}
 		}
-		kobject_uevent(&e->kobj, KOBJ_ADD);
+		if (uevent)
+			kobject_uevent(&e->kobj, KOBJ_ADD);
+
 		e->registered = 1;
 		if (!e->uses_mq && e->type->ops.sq.elevator_registered_fn)
 			e->type->ops.sq.elevator_registered_fn(q);
@@ -867,15 +868,19 @@ int elv_register_queue(struct request_queue *q)
 	return error;
 }
 
+/*
+ * elv_unregister_queue is called from either blk_unregister_queue or
+ * elevator_switch, elevator switch is prevented from being happen
+ * in the two paths, so it is safe to not hold q->sysfs_lock.
+ */
 void elv_unregister_queue(struct request_queue *q)
 {
-	lockdep_assert_held(&q->sysfs_lock);
-
 	if (q) {
 		struct elevator_queue *e = q->elevator;
 
 		kobject_uevent(&e->kobj, KOBJ_REMOVE);
 		kobject_del(&e->kobj);
+
 		e->registered = 0;
 	}
 }
@@ -949,6 +954,7 @@ int elevator_switch_mq(struct request_queue *q,
 	if (q->elevator) {
 		if (q->elevator->registered)
 			elv_unregister_queue(q);
+
 		ioc_clear_queue(q);
 		elevator_exit(q, q->elevator);
 	}
@@ -958,7 +964,7 @@ int elevator_switch_mq(struct request_queue *q,
 		goto out;
 
 	if (new_e) {
-		ret = elv_register_queue(q);
+		ret = elv_register_queue(q, true);
 		if (ret) {
 			elevator_exit(q, q->elevator);
 			goto out;
@@ -987,23 +993,27 @@ int elevator_init_mq(struct request_queue *q)
 	if (q->nr_hw_queues != 1)
 		return 0;
 
-	WARN_ON_ONCE(test_bit(QUEUE_FLAG_REGISTERED, &q->queue_flags));
-
+	/*
+	 * q->sysfs_lock must be held to provide mutual exclusion between
+	 * elevator_switch() and here.
+	 */
+	mutex_lock(&q->sysfs_lock);
 	if (unlikely(q->elevator))
-		goto out;
+		goto out_unlock;
 	if (IS_ENABLED(CONFIG_IOSCHED_BFQ)) {
 		e = elevator_get(q, "bfq", false);
 		if (!e)
-			goto out;
+			goto out_unlock;
 	} else {
 		e = elevator_get(q, "mq-deadline", false);
 		if (!e)
-			goto out;
+			goto out_unlock;
 	}
 	err = blk_mq_init_sched(q, e);
 	if (err)
 		elevator_put(e);
-out:
+out_unlock:
+	mutex_unlock(&q->sysfs_lock);
 	return err;
 }
 
@@ -1058,7 +1068,7 @@ static int elevator_switch(struct request_queue *q, struct elevator_type *new_e)
 	if (err)
 		goto fail_init;
 
-	err = elv_register_queue(q);
+	err = elv_register_queue(q, true);
 	if (err)
 		goto fail_register;
 
@@ -1078,7 +1088,7 @@ fail_init:
 	/* switch failed, restore and re-register old elevator */
 	if (old) {
 		q->elevator = old;
-		elv_register_queue(q);
+		elv_register_queue(q, true);
 		blk_queue_bypass_end(q);
 	}
 

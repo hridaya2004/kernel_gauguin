@@ -131,7 +131,6 @@ static int __maybe_unused one = 1;
 static int __maybe_unused two = 2;
 static int __maybe_unused three = 3;
 static int __maybe_unused four = 4;
-static int int_max = INT_MAX;
 static unsigned long zero_ul;
 static unsigned long one_ul = 1;
 static unsigned long long_max = LONG_MAX;
@@ -613,24 +612,15 @@ static struct ctl_table kern_table[] = {
 		.extra2		= &max_cfs_boost_prio,
 	},
 	{
-		.procname	= "walt_low_latency_task_threshold",
-		.data		= &sysctl_walt_low_latency_task_threshold,
+		.procname	= "walt_low_latency_task_boost",
+		.data		= &sysctl_walt_low_latency_task_boost,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler   = proc_dointvec_minmax,
 		.extra1		= &zero,
-		.extra2		= &one_thousand,
-	},
-#endif
-	{
-		.procname	= "sched_force_lb_enable",
-		.data		= &sysctl_sched_force_lb_enable,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
 		.extra2		= &one,
 	},
+#endif
 #ifdef CONFIG_SCHED_DEBUG
 	{
 		.procname       = "sched_cstate_aware",
@@ -756,8 +746,6 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= sched_rt_handler,
-		.extra1		= &one,
-		.extra2		= &int_max,
 	},
 	{
 		.procname	= "sched_rt_runtime_us",
@@ -765,8 +753,6 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= sched_rt_handler,
-		.extra1		= &neg_one,
-		.extra2		= &int_max,
 	},
 	{
 		.procname	= "sched_rr_timeslice_ms",
@@ -2504,14 +2490,13 @@ int proc_dostring(struct ctl_table *table, int write,
 			       (char __user *)buffer, lenp, ppos);
 }
 
-static void proc_skip_spaces(char **buf, size_t *size)
+static size_t proc_skip_spaces(char **buf)
 {
-	while (*size) {
-		if (!isspace(**buf))
-			break;
-		(*size)--;
-		(*buf)++;
-	}
+	size_t ret;
+	char *tmp = skip_spaces(*buf);
+	ret = tmp - *buf;
+	*buf = tmp;
+	return ret;
 }
 
 static void proc_skip_char(char **buf, size_t *size, const char v)
@@ -2580,12 +2565,13 @@ static int proc_get_long(char **buf, size_t *size,
 			  unsigned long *val, bool *neg,
 			  const char *perm_tr, unsigned perm_tr_len, char *tr)
 {
+	int len;
 	char *p, tmp[TMPBUFLEN];
-	ssize_t len = *size;
 
-	if (len <= 0)
+	if (!*size)
 		return -EINVAL;
 
+	len = *size;
 	if (len > TMPBUFLEN - 1)
 		len = TMPBUFLEN - 1;
 
@@ -2748,7 +2734,7 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 		bool neg;
 
 		if (write) {
-			proc_skip_spaces(&p, &left);
+			left -= proc_skip_spaces(&p);
 
 			if (!left)
 				break;
@@ -2779,7 +2765,7 @@ static int __do_proc_dointvec(void *tbl_data, struct ctl_table *table,
 	if (!write && !first && left && !err)
 		err = proc_put_char(&buffer, &left, '\n');
 	if (write && !err && left)
-		proc_skip_spaces(&p, &left);
+		left -= proc_skip_spaces(&p);
 	if (write) {
 		kfree(kbuf);
 		if (first)
@@ -2828,7 +2814,7 @@ static int do_proc_douintvec_w(unsigned int *tbl_data,
 	if (IS_ERR(kbuf))
 		return -EINVAL;
 
-	proc_skip_spaces(&p, &left);
+	left -= proc_skip_spaces(&p);
 	if (!left) {
 		err = -EINVAL;
 		goto out_free;
@@ -2848,7 +2834,7 @@ static int do_proc_douintvec_w(unsigned int *tbl_data,
 	}
 
 	if (!err && left)
-		proc_skip_spaces(&p, &left);
+		left -= proc_skip_spaces(&p);
 
 out_free:
 	kfree(kbuf);
@@ -3282,7 +3268,7 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int 
 		if (write) {
 			bool neg;
 
-			proc_skip_spaces(&p, &left);
+			left -= proc_skip_spaces(&p);
 			if (!left)
 				break;
 
@@ -3315,7 +3301,7 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int 
 	if (!write && !first && left && !err)
 		err = proc_put_char(&buffer, &left, '\n');
 	if (write && !err)
-		proc_skip_spaces(&p, &left);
+		left -= proc_skip_spaces(&p);
 	if (write) {
 		kfree(kbuf);
 		if (first)

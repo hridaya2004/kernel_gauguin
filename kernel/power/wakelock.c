@@ -39,16 +39,16 @@ ssize_t pm_show_wakelocks(char *buf, bool show_active)
 {
 	struct rb_node *node;
 	struct wakelock *wl;
-	int len = 0;
+        int len = 0;
 
 	mutex_lock(&wakelocks_lock);
 
 	for (node = rb_first(&wakelocks_tree); node; node = rb_next(node)) {
 		wl = rb_entry(node, struct wakelock, node);
 		if (wl->ws->active == show_active)
-			len += sysfs_emit_at(buf, len, "%s ", wl->name);
+		        len += sysfs_emit_at(buf, len, "%s ", wl->name);
 	}
-	len += sysfs_emit_at(buf, len, "\n");
+	len += sysfs_emit_at(buf, len, "%s ", wl->name);
 
 	mutex_unlock(&wakelocks_lock);
 	return len;

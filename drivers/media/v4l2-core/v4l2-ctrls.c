@@ -312,12 +312,14 @@ const char * const *v4l2_ctrl_get_menu(u32 id)
 	static const char * const header_mode[] = {
 		"Separate Buffer",
 		"Joined With 1st Frame",
+		"Joined with I Frame",
 		NULL,
 	};
 	static const char * const multi_slice[] = {
 		"Single",
 		"Max Macroblocks",
 		"Max Bytes",
+		"Gob",
 		NULL,
 	};
 	static const char * const entropy_mode[] = {
@@ -836,7 +838,8 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER:return "H264 Number of HC Layers";
 	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_LAYER_QP:
 								return "H264 Set QP Value for HC Layers";
-	case V4L2_CID_MPEG_VIDEO_H264_CHROMA_QP_INDEX_OFFSET:	return "H264 Chroma QP Index Offset";
+	case V4L2_CID_MPEG_VIDEO_H264_CHROMA_QP_INDEX_OFFSET:
+					return "H264 Chroma QP Index Offset";
 	case V4L2_CID_MPEG_VIDEO_MPEG4_I_FRAME_QP:		return "MPEG4 I-Frame QP Value";
 	case V4L2_CID_MPEG_VIDEO_MPEG4_P_FRAME_QP:		return "MPEG4 P-Frame QP Value";
 	case V4L2_CID_MPEG_VIDEO_MPEG4_B_FRAME_QP:		return "MPEG4 B-Frame QP Value";
