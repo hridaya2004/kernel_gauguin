@@ -2572,8 +2572,8 @@ int smblib_get_batt_current_now(struct smb_charger *chg,
 
 	rc = smblib_get_prop_from_bms(chg,
 			POWER_SUPPLY_PROP_CURRENT_NOW, val);
-	// if (!rc)
-	//	val->intval *= (-1);
+	if (!rc)
+		val->intval *= (-1);
 
 	return rc;
 }
@@ -6596,7 +6596,7 @@ out:
 		return;
 	}
 
-	ibat_ua = - pval.intval;
+	ibat_ua = pval.intval;
 	pr_err("ibat_ua: %d\n", ibat_ua);
 
 	if (main_charge_type == POWER_SUPPLY_CHARGE_TYPE_TAPER
