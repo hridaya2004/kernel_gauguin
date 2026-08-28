@@ -204,6 +204,7 @@ extern struct nvt_ts_data *ts;
 
 int32_t CTP_SPI_READ(struct spi_device *client, uint8_t *buf, uint16_t len);
 int32_t CTP_SPI_WRITE(struct spi_device *client, uint8_t *buf, uint16_t len);
+void nvt_stop_crc_reboot(void);
 void nvt_bootloader_reset(void);
 void nvt_eng_reset(void);
 void nvt_sw_reset(void);

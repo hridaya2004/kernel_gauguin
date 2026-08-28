@@ -258,6 +258,66 @@ int32_t nvt_set_page(uint32_t addr)
 
 /*******************************************************
 Description:
+	Stop CRC auto-reboot loop if IC is stuck in one.
+
+return:
+	n.a.
+*******************************************************/
+void nvt_stop_crc_reboot(void)
+{
+	uint8_t buf[8] = {0};
+	int32_t retry = 0;
+
+	/* ---change SPI index to prevent getting 0xFF, but not 0xFC--- */
+	nvt_set_page(0x1F64E);
+
+	/* ---read to check if buf is 0xFC which means IC is in CRC reboot --- */
+	buf[0] = 0x4E;
+	CTP_SPI_READ(ts->client, buf, 4);
+
+	if ((buf[1] == 0xFC) ||
+		((buf[1] == 0xFF) && (buf[2] == 0xFF) && (buf[3] == 0xFF))) {
+
+		/* IC is in CRC fail reboot loop, needs to be stopped! */
+		for (retry = 5; retry > 0; retry--) {
+
+			/* ---write SPI cmds to reset idle : 1st--- */
+			buf[0] = 0x00;
+			buf[1] = 0xA5;
+			CTP_SPI_WRITE(ts->client, buf, 2);
+
+			/* ---write SPI cmds to reset idle : 2nd--- */
+			buf[0] = 0x00;
+			buf[1] = 0xA5;
+			CTP_SPI_WRITE(ts->client, buf, 2);
+			msleep(1);
+
+			/* ---clear CRC_ERR_FLAG--- */
+			nvt_set_page(0x3F135);
+
+			buf[0] = 0x35;
+			buf[1] = 0xA5;
+			CTP_SPI_WRITE(ts->client, buf, 2);
+
+			/* ---check CRC_ERR_FLAG--- */
+			nvt_set_page(0x3F135);
+
+			buf[0] = 0x35;
+			buf[1] = 0x00;
+			CTP_SPI_READ(ts->client, buf, 2);
+
+			if (buf[1] == 0xA5)
+				break;
+		}
+		if (retry == 0)
+			NVT_ERR("CRC auto reboot is not able to be stopped!\n");
+	}
+
+	return;
+}
+
+/*******************************************************
+Description:
 	Novatek touchscreen write data to specify address.
 
 return:

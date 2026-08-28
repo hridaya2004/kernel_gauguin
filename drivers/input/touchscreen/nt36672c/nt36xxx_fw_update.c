@@ -1098,6 +1098,9 @@ int32_t nvt_update_firmware(const char *firmware_name)
 		goto request_firmware_fail;
 	}
 
+	/* stop CRC auto-reboot loop if IC is stuck */
+	nvt_stop_crc_reboot();
+
 	/* initial buffer and variable */
 	ret = nvt_download_init();
 	if (ret) {
