@@ -1753,10 +1753,10 @@ Description:
 return:
 	Executive outcomes. 0---succeed. negative---failed
 *******************************************************/
+static int32_t nvt_ts_late_probe(struct spi_device *client);
 static int32_t nvt_ts_probe(struct spi_device *client)
 {
 	int32_t ret = 0;
-	int32_t retry = 0;
 
 	NVT_LOG("start\n");
 
@@ -1837,21 +1837,52 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	}
 	NVT_LOG("finish check chip\n");
 
+	/* ---late probe: input, IRQ, workqueues, DRM--- */
+	ret = nvt_ts_late_probe(client);
+	if (ret) {
+		NVT_ERR("late probe failed. ret=%d\n", ret);
+		goto err_chipvertrim_failed;
+	}
+
+	return 0;
+
+err_chipvertrim_failed:
+	mutex_destroy(&ts->xbuf_lock);
+	mutex_destroy(&ts->lock);
+	nvt_gpio_deconfig(ts);
+err_gpio_config_failed:
+err_spi_setup:
+err_ckeck_full_duplex:
+	spi_set_drvdata(client, NULL);
+	return ret;
+}
+
+/*******************************************************
+Description:
+	Novatek touchscreen late probe - input device, IRQ,
+	workqueues, and DRM notifier registration.
+
+return:
+	Executive outcomes. 0---succeed. negative---failed
+*******************************************************/
+static int32_t nvt_ts_late_probe(struct spi_device *client)
+{
+	int32_t ret = 0;
+	int32_t retry = 0;
+
 	ts->abs_x_max = TOUCH_DEFAULT_MAX_WIDTH;
 	ts->abs_y_max = TOUCH_DEFAULT_MAX_HEIGHT;
 	ts->input_dev = input_allocate_device();
 	if (ts->input_dev == NULL) {
 		NVT_ERR("allocate input device failed\n");
-		ret = -ENOMEM;
-		goto err_input_dev_alloc_failed;
+		return -ENOMEM;
 	}
 
 	ts->max_touch_num = TOUCH_MAX_FINGER_NUM;
 
-
 	ts->int_trigger_type = INT_TRIGGER_TYPE;
 
-	ts->input_dev->evbit[0] = BIT_MASK(EV_SYN) | BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS) ;
+	ts->input_dev->evbit[0] = BIT_MASK(EV_SYN) | BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 	__set_bit(BTN_TOUCH, ts->input_dev->keybit);
 	__set_bit(BTN_TOOL_FINGER, ts->input_dev->keybit);
 	ts->input_dev->propbit[0] = BIT(INPUT_PROP_DIRECT);
@@ -1861,8 +1892,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 #endif
 
 #if TOUCH_MAX_FINGER_NUM > 1
-	/*input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);*/
-
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max - 1, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max - 1, 0, 0);
 #if MT_PROTOCOL_B
@@ -1924,7 +1953,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		NVT_LOG("nvt_lockdown_wq create workqueue successful!\n");
 	}
 	INIT_DELAYED_WORK(&ts->nvt_lockdown_work, get_lockdown_info);
-	/* please make sure boot update start after display reset(RESX) sequence*/
+	/* please make sure boot update start after display reset(RESX) sequence */
 	queue_delayed_work(nvt_lockdown_wq, &ts->nvt_lockdown_work, msecs_to_jiffies(1000));
 
 #if WAKEUP_GESTURE
@@ -1988,7 +2017,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 
 	ts->drm_notif.notifier_call = nvt_drm_notifier_callback;
 	ret = msm_drm_register_client(&ts->drm_notif);
-	if(ret) {
+	if (ret) {
 		NVT_ERR("register drm_notifier failed. ret=%d\n", ret);
 		goto err_register_drm_notif_failed;
 	}
@@ -2008,11 +2037,11 @@ err_register_drm_notif_failed:
 	destroy_workqueue(ts->event_wq);
 err_alloc_failed:
 #if NVT_TOUCH_EXT_PROC
-nvt_extra_proc_deinit();
+	nvt_extra_proc_deinit();
 err_extra_proc_init_failed:
 #endif
 #if NVT_TOUCH_PROC
-nvt_flash_proc_deinit();
+	nvt_flash_proc_deinit();
 err_flash_proc_init_failed:
 #endif
 #if NVT_TOUCH_ESD_PROTECT
@@ -2050,15 +2079,6 @@ err_input_register_device_failed:
 		input_free_device(ts->input_dev);
 		ts->input_dev = NULL;
 	}
-err_input_dev_alloc_failed:
-err_chipvertrim_failed:
-	mutex_destroy(&ts->xbuf_lock);
-	mutex_destroy(&ts->lock);
-	nvt_gpio_deconfig(ts);
-err_gpio_config_failed:
-err_spi_setup:
-err_ckeck_full_duplex:
-	spi_set_drvdata(client, NULL);
 	return ret;
 }
 
