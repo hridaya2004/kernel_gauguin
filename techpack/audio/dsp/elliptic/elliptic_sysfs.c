@@ -503,7 +503,7 @@ static ssize_t cache_show(char *buf, int pretty)
 static ssize_t opmode_show(struct kobject *kobj,
 	struct kobj_attribute *attr, char *buf)
 {
-	int length;
+	int length = 0;
 	ssize_t result;
 
 	struct elliptic_system_configuration_parameters_cache *cache =
@@ -518,7 +518,7 @@ static ssize_t opmode_show(struct kobject *kobj,
 static ssize_t opmode_flags_show(struct kobject *kobj,
 	struct kobj_attribute *attr, char *buf)
 {
-	int length;
+	int length = 0;
 	ssize_t result;
 	struct elliptic_system_configuration_parameters_cache *cache =
 				&elliptic_system_configuration_cache;
